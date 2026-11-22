@@ -70,7 +70,7 @@ class QuantTradingEngine:
         self.round_episode_samples: list[tuple[list[float], float]] = []
         self.round_orders_count: int = 0
         self.last_arb_attempt_ts: float = 0.0
-        self.live_chart_buffer: deque[dict] = deque(maxlen=180)
+        self.live_chart_buffer: deque[dict] = deque(maxlen=320)
         self.latest_pricing: dict = {
             "model_up_prob": 0.5,
             "model_down_prob": 0.5,
@@ -272,6 +272,7 @@ class QuantTradingEngine:
         self.current_window_ts = new_window_ts
         self.current_slug = f"btc-updown-5m-{new_window_ts}"
         self.round_episode_samples = []
+        self.live_chart_buffer.clear()
         self.round_had_outlier = False
         self.round_orders_count = 0
         self.last_arb_attempt_ts = 0.0
@@ -555,9 +556,13 @@ class QuantTradingEngine:
                 # Sweep expired paper orders every second & verify against live books
                 self.paper.sweep_expired_orders(self.clob.books)
 
-                if spot > 0:
+                if spot > 0 and self.current_window_ts > 0:
                     oracle_spot = round(spot - self.basis_ema, 2)
-                    self.live_chart_buffer.append({
+                    up_live = (up_book["best_bid"] > 0 and up_book["best_ask"] > 0)
+                    dn_live = (dn_book["best_bid"] > 0 and dn_book["best_ask"] > 0)
+                    sec_s = max(0, min(300, int(elapsed_sec)))
+                    pt = {
+                        "s": sec_s,
                         "t": time.strftime("%H:%M:%S", time.gmtime(now)),
                         "spot": round(spot, 2),
                         "oracle_spot": oracle_spot,
@@ -565,9 +570,13 @@ class QuantTradingEngine:
                         "strike": round(strike, 2) if strike > 0 else None,
                         "net_power_bps": snap["net_power_bps"],
                         "model_up_prob": round(model_up_p * 100, 1),
-                        "pm_up_mid": round((up_book["mid"] or 0.5) * 100, 1),
-                        "pm_down_mid": round((dn_book["mid"] or 0.5) * 100, 1),
-                    })
+                        "pm_up_mid": round(up_book["mid"] * 100, 1) if up_live else None,
+                        "pm_down_mid": round(dn_book["mid"] * 100, 1) if dn_live else None,
+                    }
+                    if self.live_chart_buffer and self.live_chart_buffer[-1].get("s") == sec_s:
+                        self.live_chart_buffer[-1] = pt
+                    else:
+                        self.live_chart_buffer.append(pt)
 
                 # Pre-fetch next round's Token IDs 30s before rollover so new round starts with live quotes immediately
                 if elapsed_sec >= 270 and (self.current_window_ts + 300) not in self.prefetched_rounds:
@@ -1249,6 +1258,46 @@ class QuantTradingEngine:
             return "挂单等待成交"
         return "本场空仓"
 
+    def _build_round_chart_events(self, mode: str) -> list[dict]:
+        """Build lightweight in-round order/fill/exit markers for the 0-300s orderbook chart."""
+        if not self.current_window_ts:
+            return []
+        eff_mode = mode if mode in ("PAPER", "LIVE") else "PAPER"
+        orders = [o for o in self.db.get_orders_by_window(self.current_window_ts) if o.get("mode") == eff_mode]
+        events: list[dict] = []
+        win_ts = float(self.current_window_ts)
+        for o in orders:
+            st = o.get("status")
+            side = str(o.get("side") or "")
+            if st in ("FILLED", "SETTLED", "CLOSED") and o.get("fill_price") is not None:
+                fill_px = float(o["fill_price"])
+                f_ts = float(o.get("filled_at") or o.get("created_at") or win_ts)
+                f_sec = max(0, min(300, int(round(f_ts - win_ts))))
+                is_arb = (o.get("arm_id") == "ARB_LOCK_MAKER")
+                events.append({
+                    "kind": "ARB" if is_arb else "ENTRY",
+                    "side": side,
+                    "sec": f_sec,
+                    "price": round(fill_px * 100.0, 1),
+                    "label": f"{'锁' if is_arb else '买'}{side} {round(fill_px * 100):.0f}¢",
+                    "active_cost": (not is_arb) and (st == "FILLED"),
+                })
+            if st == "CLOSED" and o.get("exit_price") is not None:
+                ex_px = float(o["exit_price"])
+                ex_ts = float(o.get("settled_at") or o.get("filled_at") or win_ts)
+                ex_sec = max(0, min(300, int(round(ex_ts - win_ts))))
+                reason = str(o.get("exit_reason") or "")
+                is_sl = ("止损" in reason)
+                events.append({
+                    "kind": "EXIT_SL" if is_sl else "EXIT_TP",
+                    "side": side,
+                    "sec": ex_sec,
+                    "price": round(ex_px * 100.0, 1),
+                    "label": f"{'止损' if is_sl else '止盈'} {round(ex_px * 100):.0f}¢",
+                    "active_cost": False,
+                })
+        return events
+
     def get_live_state_payload(self) -> dict:
         now = time.time()
         elapsed = max(0, min(300, int(now - self.current_window_ts))) if self.current_window_ts else 0
@@ -1309,5 +1358,6 @@ class QuantTradingEngine:
             "training_status": self.training_status,
             "wallet": self.account.get_public_wallet_info(),
             "portfolio": self.account.cached_portfolio,
-            "chart_points": list(self.live_chart_buffer)[-90:],
+            "chart_points": list(self.live_chart_buffer),
+            "round_events": self._build_round_chart_events(mode),
         }

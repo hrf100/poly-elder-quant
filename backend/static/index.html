@@ -98,7 +98,7 @@
           <div class="flex items-center gap-2 min-w-0">
             <span class="w-2 h-2 rounded-full shrink-0" :class="wsConnected ? 'bg-emerald-400 shadow-[0_0_6px_#10b981]' : 'bg-rose-500'"></span>
             <span class="font-bold text-[15px] text-white tracking-tight truncate">PolyQuant <span class="text-indigo-400">5m</span></span>
-            <span class="px-1.5 py-0.5 rounded bg-card border border-line2 text-[10px] mono text-slate-300 shrink-0">v30</span>
+            <span class="px-1.5 py-0.5 rounded bg-card border border-line2 text-[10px] mono text-slate-300 shrink-0">v32</span>
           </div>
           <nav class="hidden sm:flex items-center gap-1 bg-card p-0.5 rounded-lg border border-line">
             <button v-for="t in tabs" :key="t.id" @click="switchTab(t.id)"
@@ -332,15 +332,15 @@
               </div>
             </div>
 
-            <!-- Countdown Progress Bar -->
+            <!-- Countdown Progress Bar (decreasing, ultra-slim 3px) -->
             <div class="flex items-center gap-2.5 text-[11px]">
               <span class="text-slate-400 shrink-0">倒计时</span>
-              <div class="flex-1 bg-[#182234] h-1.5 rounded-full overflow-hidden">
-                <div class="h-full transition-all duration-500"
-                     :class="state.round.remaining_sec <= 60 ? 'bg-amber-400' : 'bg-emerald-500'"
-                     :style="{width: (state.round.elapsed_sec / 3) + '%'}"></div>
+              <div class="flex-1 bg-[#182234] h-[3px] rounded-full overflow-hidden">
+                <div class="h-full rounded-full transition-all duration-500"
+                     :class="state.round.remaining_sec <= 15 ? 'bg-rose-400' : (state.round.remaining_sec <= 60 ? 'bg-amber-400' : 'bg-emerald-500')"
+                     :style="{width: Math.max(0, Math.min(100, (state.round.remaining_sec / 3))) + '%'}"></div>
               </div>
-              <span class="mono font-bold shrink-0" :class="state.round.remaining_sec <= 60 ? 'text-amber-400' : 'text-white'">
+              <span class="mono font-bold shrink-0" :class="state.round.remaining_sec <= 15 ? 'text-rose-400' : (state.round.remaining_sec <= 60 ? 'text-amber-400' : 'text-white')">
                 {{ state.round.remaining_sec }}s <span class="text-slate-400 font-normal">/ 300s</span>
               </span>
             </div>
@@ -349,30 +349,35 @@
             <div class="chart-well p-1.5"><div id="liveChart" class="w-full h-56 sm:h-64"></div></div>
           </div>
 
-          <!-- Right 6/12: Polymarket 盘口定价 & Dual-Mode Chart (盘口双线 / 收益曲线) -->
+          <!-- Right 6/12: 方案 B — 本场盘口 (0~300s) / 账户收益曲线 智能双模卡 -->
           <div class="lg:col-span-6 term-card p-3.5 sm:p-4 flex flex-col gap-2.5">
             <div class="flex flex-wrap items-center justify-between gap-2">
-              <div class="flex items-center gap-2">
-                <h2 class="text-sm font-bold text-white">Polymarket 盘口与收益</h2>
-                <span class="px-2 py-0.5 rounded bg-emerald-500/12 border border-emerald-500/35 text-[11px] text-emerald-300 font-medium truncate max-w-[160px]">
+              <div class="flex items-center gap-2 min-w-0">
+                <h2 class="text-sm font-bold text-white shrink-0">{{ rightChartMode === 'book' ? '本场盘口走势' : '账户收益曲线' }}</h2>
+                <span v-if="rightChartMode === 'book'"
+                      class="px-2 py-0.5 rounded bg-emerald-500/12 border border-emerald-500/35 text-[11px] text-emerald-300 font-medium truncate max-w-[175px]">
                   {{ state.strategy.round_position || '本场空仓' }}
+                </span>
+                <span v-else
+                      class="px-2 py-0.5 rounded bg-indigo-500/15 border border-indigo-500/35 text-[11px] text-indigo-300 font-medium">
+                  {{ state.mode === 'LIVE' ? '实盘账户' : '模拟账户' }}
                 </span>
               </div>
               <div class="flex items-center gap-1.5">
                 <div class="flex bg-sub p-0.5 rounded-lg border border-line2 text-[11px]">
                   <button type="button" @click="setRightChartMode('book')"
-                          class="px-2 py-0.5 rounded-md font-medium transition"
-                          :class="rightChartMode === 'book' ? 'bg-[#1E293B] text-white' : 'text-slate-400 hover:text-slate-200'">盘口走势</button>
+                          class="px-2.5 py-0.5 rounded-md font-medium transition"
+                          :class="rightChartMode === 'book' ? 'bg-[#1E293B] text-white' : 'text-slate-400 hover:text-slate-200'">本场盘口</button>
                   <button type="button" @click="setRightChartMode('equity')"
-                          class="px-2 py-0.5 rounded-md font-medium transition"
+                          class="px-2.5 py-0.5 rounded-md font-medium transition"
                           :class="rightChartMode === 'equity' ? 'bg-[#1E293B] text-white' : 'text-slate-400 hover:text-slate-200'">收益曲线</button>
                 </div>
                 <button @click="loadTradingData(false)" class="px-2 py-1 rounded-md bg-sub hover:bg-slate-800 border border-line2 text-[11px] text-slate-200">刷新</button>
               </div>
             </div>
 
-            <!-- UP & DOWN Pill Strips (PolySniper signature green/rose pill layout) -->
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mono text-xs">
+            <!-- Context Strip A: 本场盘口模式 -> UP / DOWN 实时盘口 + 赔率 + 优势药丸 -->
+            <div v-if="rightChartMode === 'book'" class="grid grid-cols-1 sm:grid-cols-2 gap-2 mono text-xs">
               <div class="px-3 py-2 rounded-lg bg-[#071917] border border-emerald-500/30 flex items-center justify-between gap-2">
                 <div class="flex items-center gap-1.5 min-w-0">
                   <span class="font-bold text-emerald-400">UP</span>
@@ -394,6 +399,26 @@
                       :class="state.strategy.pricing.down_edge >= 0.04 ? 'bg-rose-500/20 text-rose-300' : 'bg-slate-800/80 text-slate-300'">
                   {{ state.strategy.pricing.down_edge >= 0 ? '+' : '' }}{{ (state.strategy.pricing.down_edge*100).toFixed(1) }}%
                 </span>
+              </div>
+            </div>
+
+            <!-- Context Strip B: 收益曲线模式 -> 余额 / 净盈亏 / 胜率 / 回撤 4 格摘要条 -->
+            <div v-else class="grid grid-cols-2 sm:grid-cols-4 gap-2 mono text-xs">
+              <div class="px-2.5 py-1.5 rounded-lg bg-sub border border-line flex items-center justify-between gap-1">
+                <span class="text-[11px] text-slate-400 font-sans">余额</span>
+                <strong class="text-white">${{ Number(state.paper_balance).toFixed(2) }}</strong>
+              </div>
+              <div class="px-2.5 py-1.5 rounded-lg bg-sub border border-line flex items-center justify-between gap-1">
+                <span class="text-[11px] text-slate-400 font-sans">净盈亏</span>
+                <strong :class="state.stats.total_pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'">{{ state.stats.total_pnl >= 0 ? '+' : '' }}${{ state.stats.total_pnl }}</strong>
+              </div>
+              <div class="px-2.5 py-1.5 rounded-lg bg-sub border border-line flex items-center justify-between gap-1">
+                <span class="text-[11px] text-slate-400 font-sans">胜率</span>
+                <strong class="text-white">{{ state.stats.win_rate }}% <span class="text-[10px] font-normal text-slate-400">{{ state.stats.wins }}/{{ state.stats.losses }}</span></strong>
+              </div>
+              <div class="px-2.5 py-1.5 rounded-lg bg-sub border border-line flex items-center justify-between gap-1">
+                <span class="text-[11px] text-slate-400 font-sans">回撤</span>
+                <strong class="text-rose-400">-${{ state.stats.max_drawdown }}</strong>
               </div>
             </div>
 
@@ -1079,6 +1104,7 @@ createApp({
       wallet: { wallet_address: '', signature_type: 2, funder_address: '', has_private_key: false, has_api_creds: false, is_observer_only: false },
       portfolio: { usdc_balance: 0, portfolio_value: 0, total_equity: 0, allowance_ok: false, open_positions: [] },
       chart_points: [],
+      round_events: [],
     });
 
     const riskForm = reactive({
@@ -1150,51 +1176,91 @@ createApp({
     }
 
     function updateLiveChart() {
-      if (document.hidden || activeTab.value !== 'home' || !state.chart_points.length) return;
-      const pts = state.chart_points;
-      const tArr = pts.map(p => p.t);
+      if (document.hidden || activeTab.value !== 'home') return;
+      const pts = state.chart_points || [];
       const narrow = window.innerWidth < 640;
 
-      // 1. Left BTC Price + 60s TWAP + Strike + Momentum Chart (incremental zero-animation)
+      const secOf = (p, i) => (p.s != null ? Number(p.s) : i);
+      const timeBySec = {};
+      for (let i = 0; i < pts.length; i++) {
+        timeBySec[secOf(pts[i], i)] = pts[i].t || '';
+      }
+
+      // 1. Left BTC Price + 60s TWAP + Strike + Momentum Chart (fixed 0s -> 300s round stage)
       const dom = document.getElementById('liveChart');
       if (dom) {
         if (!liveChart) {
           liveChart = echarts.init(dom, null, { renderer: 'canvas' });
           liveChartInited = false;
         }
-        const sSpot = pts.map(p => p.oracle_spot ?? p.twap60);
-        const sTwap = pts.map(p => p.twap60);
-        const sStrike = pts.map(p => p.strike);
-        const sMom = pts.map(p => p.net_power_bps);
+        const sSpot = pts.map((p, i) => [secOf(p, i), p.oracle_spot ?? p.twap60]);
+        const sTwap = pts.map((p, i) => [secOf(p, i), p.twap60]);
+        const strikeVal = (state.round && state.round.price_to_beat && state.round.price_to_beat !== '--')
+          ? Number(state.round.price_to_beat)
+          : (pts.length && pts[pts.length - 1].strike ? Number(pts[pts.length - 1].strike) : null);
+        const sStrike = (strikeVal && Number.isFinite(strikeVal)) ? [[0, strikeVal], [300, strikeVal]] : [];
+        const sMom = pts.map((p, i) => [secOf(p, i), p.net_power_bps]);
+
         if (!liveChartInited) {
           liveChart.setOption({
             animation: false,
             backgroundColor: '#070B12',
-            tooltip: { trigger: 'axis', confine: true, backgroundColor: '#0E1420', borderColor: '#334155', textStyle: { color: '#f8fafc', fontSize: 11 } },
+            tooltip: {
+              trigger: 'axis',
+              confine: true,
+              backgroundColor: '#0E1420',
+              borderColor: '#334155',
+              textStyle: { color: '#f8fafc', fontSize: 11 },
+              formatter: (params) => {
+                if (!params || !params.length) return '';
+                const sec = Math.round(params[0].value[0]);
+                const tStr = timeBySec[sec] ? ` · ${timeBySec[sec]}` : '';
+                let out = `<div style="color:#94a3b8;margin-bottom:3px">第 ${sec}s${tStr}</div>`;
+                for (const p of params) {
+                  if (p.value == null || p.value[1] == null) continue;
+                  const v = Number(p.value[1]);
+                  const fmt = p.seriesName === '动量' ? `${v >= 0 ? '+' : ''}${v.toFixed(2)} bps` : `$${v.toFixed(2)}`;
+                  out += `<div>${p.marker}${p.seriesName}: <b>${fmt}</b></div>`;
+                }
+                return out;
+              }
+            },
             legend: { data: ['现价', '60s均价', '目标价', '动量'], textStyle: { color: '#94a3b8', fontSize: narrow ? 10 : 11 }, itemWidth: narrow ? 12 : 16, itemGap: narrow ? 8 : 12, top: 4 },
             grid: { left: narrow ? 48 : 58, right: narrow ? 32 : 40, top: 30, bottom: 22 },
-            xAxis: { type: 'category', data: tArr, axisLine: { lineStyle: { color: '#1E293B' } }, axisLabel: { color: '#94a3b8', fontSize: narrow ? 9 : 10 } },
+            xAxis: {
+              type: 'value', min: 0, max: 300, interval: 60,
+              axisLine: { lineStyle: { color: '#1E293B' } },
+              splitLine: { lineStyle: { color: '#111927' } },
+              axisLabel: { color: '#94a3b8', fontSize: narrow ? 9 : 10, formatter: '{value}s' }
+            },
             yAxis: [
               { type: 'value', scale: true, splitLine: { lineStyle: { color: '#141D2E' } }, axisLabel: { color: '#cbd5e1', fontSize: narrow ? 9 : 10 } },
               { type: 'value', scale: true, splitLine: { show: false }, axisLabel: { color: '#64748b', fontSize: narrow ? 9 : 10 } },
             ],
             series: [
-              { name: '现价', type: 'line', showSymbol: false, data: sSpot, lineStyle: { color: '#38bdf8', width: 1.6 } },
+              {
+                name: '现价', type: 'line', showSymbol: false, data: sSpot, lineStyle: { color: '#38bdf8', width: 1.6 },
+                markArea: {
+                  silent: true,
+                  itemStyle: { color: 'rgba(245,158,11,0.055)' },
+                  label: { show: true, position: 'insideTop', color: 'rgba(251,191,36,0.65)', fontSize: 9, distance: 4 },
+                  data: [[{ name: 'TWAP 锁定', xAxis: 240 }, { xAxis: 300 }]]
+                }
+              },
               { name: '60s均价', type: 'line', showSymbol: false, data: sTwap, lineStyle: { color: '#f59e0b', width: 1.8 } },
               { name: '目标价', type: 'line', showSymbol: false, data: sStrike, lineStyle: { color: '#fbbf24', type: 'dashed', width: 1.2 } },
-              { name: '动量', type: 'bar', yAxisIndex: 1, data: sMom, itemStyle: { color: (p) => p.value >= 0 ? 'rgba(16,185,129,0.32)' : 'rgba(244,63,94,0.32)' } },
+              { name: '动量', type: 'bar', yAxisIndex: 1, barMaxWidth: 3, data: sMom, itemStyle: { color: (p) => (p.value && p.value[1] >= 0) ? 'rgba(16,185,129,0.32)' : 'rgba(244,63,94,0.32)' } },
             ]
           });
           liveChartInited = true;
         } else {
           liveChart.setOption({
-            xAxis: { data: tArr },
             series: [{ data: sSpot }, { data: sTwap }, { data: sStrike }, { data: sMom }]
           }, false, true);
         }
       }
 
-      // 2. Right Polymarket UP / DOWN Dual-Line Orderbook Chart (when 'book' tab active)
+      // 2. Right Polymarket Round-Scoped 0s -> 300s Orderbook Chart (4 clean layers)
       if (rightChartMode.value === 'book') {
         const bdom = document.getElementById('bookChart');
         if (bdom) {
@@ -1202,25 +1268,140 @@ createApp({
             bookChart = echarts.init(bdom, null, { renderer: 'canvas' });
             bookChartInited = false;
           }
-          const sUp = pts.map(p => Number(p.pm_up_mid ?? 50));
-          const sDn = pts.map(p => p.pm_down_mid != null ? Number(p.pm_down_mid) : Number((100 - Number(p.pm_up_mid ?? 50)).toFixed(1)));
+          const sUp = pts.map((p, i) => [secOf(p, i), p.pm_up_mid != null ? Number(p.pm_up_mid) : null]);
+          const sDn = pts.map((p, i) => [secOf(p, i), p.pm_down_mid != null ? Number(p.pm_down_mid) : null]);
+          const sModelUp = pts.map((p, i) => [secOf(p, i), p.model_up_prob != null ? Number(p.model_up_prob) : null]);
+
+          // Dynamic AI max entry price ceiling (e.g. 75c) + active position entry cost line
+          const maxPxCents = Math.round(Number((state.learning && state.learning.auto_params && state.learning.auto_params.max_entry_price) || 0.75) * 100);
+          const roundEvents = state.round_events || [];
+          const markLines = [
+            { yAxis: 50, lineStyle: { color: '#334155', type: 'dotted', width: 1 }, label: { show: false } },
+            {
+              yAxis: maxPxCents,
+              lineStyle: { color: '#475569', type: 'dashed', width: 1 },
+              label: { show: true, position: 'insideEndTop', formatter: `上限 ${maxPxCents}¢`, color: '#94a3b8', fontSize: 9, distance: 2 }
+            },
+          ];
+          const activeEntry = roundEvents.find(ev => ev.active_cost);
+          if (activeEntry) {
+            const cColor = activeEntry.side === 'UP' ? '#10b981' : '#f43f5e';
+            markLines.push({
+              yAxis: activeEntry.price,
+              lineStyle: { color: cColor, type: 'dashed', width: 1.2, opacity: 0.8 },
+              label: { show: true, position: 'insideStartTop', formatter: `成本 ${Math.round(activeEntry.price)}¢`, color: cColor, fontSize: 9, distance: 2 }
+            });
+          }
+
+          // Trade event markers (Entry / Arb Lock / TP / SL)
+          const evPoints = roundEvents.map(ev => {
+            const color = ev.kind === 'EXIT_SL' ? '#f43f5e'
+              : (ev.kind === 'EXIT_TP' ? '#fbbf24'
+              : (ev.kind === 'ARB' ? '#38bdf8'
+              : (ev.side === 'UP' ? '#10b981' : '#f43f5e')));
+            return {
+              value: [ev.sec, ev.price],
+              name: ev.label,
+              symbol: ev.kind === 'ENTRY' ? 'circle' : 'diamond',
+              symbolSize: ev.kind === 'ENTRY' ? 8 : 9,
+              itemStyle: { color, borderColor: '#070B12', borderWidth: 1.5 },
+              label: {
+                show: true,
+                formatter: ev.label,
+                position: ev.price > 78 ? 'bottom' : 'top',
+                distance: 5,
+                color: '#f8fafc',
+                backgroundColor: 'rgba(14,20,32,0.9)',
+                borderColor: color,
+                borderWidth: 1,
+                borderRadius: 3,
+                padding: [2, 4],
+                fontSize: 9,
+              }
+            };
+          });
+
           if (!bookChartInited) {
             bookChart.setOption({
               animation: false,
               backgroundColor: '#070B12',
-              tooltip: { trigger: 'axis', confine: true, backgroundColor: '#0E1420', borderColor: '#334155', textStyle: { color: '#f8fafc', fontSize: 11 } },
-              legend: { data: ['UP 盘口(¢)', 'DOWN 盘口(¢)'], textStyle: { color: '#94a3b8', fontSize: narrow ? 10 : 11 }, itemWidth: 14, top: 4 },
-              grid: { left: narrow ? 38 : 44, right: 14, top: 30, bottom: 22 },
-              xAxis: { type: 'category', data: tArr, axisLine: { lineStyle: { color: '#1E293B' } }, axisLabel: { color: '#94a3b8', fontSize: narrow ? 9 : 10 } },
-              yAxis: { type: 'value', min: 0, max: 100, interval: 25, splitLine: { lineStyle: { color: '#141D2E' } }, axisLabel: { color: '#cbd5e1', fontSize: narrow ? 9 : 10, formatter: '{value}¢' } },
+              tooltip: {
+                trigger: 'axis',
+                confine: true,
+                backgroundColor: '#0E1420',
+                borderColor: '#334155',
+                textStyle: { color: '#f8fafc', fontSize: 11 },
+                formatter: (params) => {
+                  if (!params || !params.length) return '';
+                  const sec = Math.round(params[0].value[0]);
+                  const tStr = timeBySec[sec] ? ` · ${timeBySec[sec]}` : '';
+                  let out = `<div style="color:#94a3b8;margin-bottom:3px">第 ${sec}s${tStr}</div>`;
+                  for (const p of params) {
+                    if (p.seriesName === '本场操作' || p.value == null || p.value[1] == null) continue;
+                    const unit = p.seriesName === '模型UP' ? '%' : '¢';
+                    out += `<div>${p.marker}${p.seriesName}: <b>${Number(p.value[1]).toFixed(1)}${unit}</b></div>`;
+                  }
+                  return out;
+                }
+              },
+              legend: { data: ['UP', 'DOWN', '模型UP'], textStyle: { color: '#94a3b8', fontSize: narrow ? 10 : 11 }, itemWidth: 14, itemGap: narrow ? 8 : 12, top: 4 },
+              grid: { left: narrow ? 36 : 42, right: narrow ? 32 : 38, top: 30, bottom: 22 },
+              xAxis: {
+                type: 'value', min: 0, max: 300, interval: 60,
+                axisLine: { lineStyle: { color: '#1E293B' } },
+                splitLine: { lineStyle: { color: '#111927' } },
+                axisLabel: { color: '#94a3b8', fontSize: narrow ? 9 : 10, formatter: '{value}s' }
+              },
+              yAxis: {
+                type: 'value', min: 0, max: 100, interval: 25,
+                splitLine: { lineStyle: { color: '#141D2E' } },
+                axisLabel: { color: '#cbd5e1', fontSize: narrow ? 9 : 10, formatter: '{value}¢' }
+              },
               series: [
-                { name: 'UP 盘口(¢)', type: 'line', showSymbol: false, data: sUp, lineStyle: { color: '#10b981', width: 2 }, areaStyle: { color: 'rgba(16,185,129,0.08)' } },
-                { name: 'DOWN 盘口(¢)', type: 'line', showSymbol: false, data: sDn, lineStyle: { color: '#f43f5e', width: 2 }, areaStyle: { color: 'rgba(244,63,94,0.08)' } },
+                {
+                  name: 'UP', type: 'line', showSymbol: false, connectNulls: false, data: sUp,
+                  lineStyle: { color: '#10b981', width: 2 },
+                  areaStyle: { color: 'rgba(16,185,129,0.08)' },
+                  endLabel: {
+                    show: true, distance: 4, color: '#34d399', fontSize: 10, fontWeight: 'bold',
+                    formatter: (p) => (p.value && p.value[1] != null) ? `${Math.round(p.value[1])}¢` : ''
+                  },
+                  markArea: {
+                    silent: true,
+                    itemStyle: { color: 'rgba(245,158,11,0.06)' },
+                    label: { show: true, position: 'insideTop', color: 'rgba(251,191,36,0.7)', fontSize: 9, distance: 4 },
+                    data: [[{ name: 'TWAP 锁定期', xAxis: 240 }, { xAxis: 300 }]]
+                  },
+                  markLine: { silent: true, symbol: ['none', 'none'], data: markLines }
+                },
+                {
+                  name: 'DOWN', type: 'line', showSymbol: false, connectNulls: false, data: sDn,
+                  lineStyle: { color: '#f43f5e', width: 2 },
+                  areaStyle: { color: 'rgba(244,63,94,0.08)' },
+                  endLabel: {
+                    show: true, distance: 4, color: '#fb7185', fontSize: 10, fontWeight: 'bold',
+                    formatter: (p) => (p.value && p.value[1] != null) ? `${Math.round(p.value[1])}¢` : ''
+                  }
+                },
+                {
+                  name: '模型UP', type: 'line', showSymbol: false, connectNulls: false, data: sModelUp,
+                  lineStyle: { color: '#38bdf8', width: 1.2, type: 'dashed', opacity: 0.85 }
+                },
+                {
+                  name: '本场操作', type: 'scatter', z: 10, data: evPoints
+                }
               ]
             });
             bookChartInited = true;
           } else {
-            bookChart.setOption({ xAxis: { data: tArr }, series: [{ data: sUp }, { data: sDn }] }, false, true);
+            bookChart.setOption({
+              series: [
+                { data: sUp, markLine: { data: markLines } },
+                { data: sDn },
+                { data: sModelUp },
+                { data: evPoints }
+              ]
+            }, false, true);
           }
         }
       }
