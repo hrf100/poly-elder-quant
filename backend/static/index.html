@@ -98,7 +98,7 @@
           <div class="flex items-center gap-2 min-w-0">
             <span class="w-2 h-2 rounded-full shrink-0" :class="wsConnected ? 'bg-emerald-400 shadow-[0_0_6px_#10b981]' : 'bg-rose-500'"></span>
             <span class="font-bold text-[15px] text-white tracking-tight truncate">PolyQuant <span class="text-indigo-400">5m</span></span>
-            <span class="px-1.5 py-0.5 rounded bg-card border border-line2 text-[10px] mono text-slate-300 shrink-0">v32</span>
+            <span class="px-1.5 py-0.5 rounded bg-card border border-line2 text-[10px] mono text-slate-300 shrink-0">v34</span>
           </div>
           <nav class="hidden sm:flex items-center gap-1 bg-card p-0.5 rounded-lg border border-line">
             <button v-for="t in tabs" :key="t.id" @click="switchTab(t.id)"
@@ -332,10 +332,10 @@
               </div>
             </div>
 
-            <!-- Countdown Progress Bar (decreasing, ultra-slim 3px) -->
+            <!-- Countdown Progress Bar (recedes left-to-right 0s -> 300s, ultra-slim 3px) -->
             <div class="flex items-center gap-2.5 text-[11px]">
               <span class="text-slate-400 shrink-0">倒计时</span>
-              <div class="flex-1 bg-[#182234] h-[3px] rounded-full overflow-hidden">
+              <div class="flex-1 bg-[#182234] h-[3px] rounded-full overflow-hidden flex justify-end">
                 <div class="h-full rounded-full transition-all duration-500"
                      :class="state.round.remaining_sec <= 15 ? 'bg-rose-400' : (state.round.remaining_sec <= 60 ? 'bg-amber-400' : 'bg-emerald-500')"
                      :style="{width: Math.max(0, Math.min(100, (state.round.remaining_sec / 3))) + '%'}"></div>
@@ -430,275 +430,280 @@
           </div>
         </div>
 
-        <!-- ZONE 2: Strategy Signal Radar + 4 Recessed High-Contrast Metric Boxes (PolySniper Mid Section) -->
-        <div class="term-card p-3.5 sm:p-4 space-y-3">
-          <!-- Decision & Block Header Bar -->
-          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-            <div class="flex items-start sm:items-center gap-2 min-w-0 flex-1">
-              <span class="px-2 py-0.5 rounded text-[11px] font-bold shrink-0"
-                    :class="state.strategy.pricing.signal === 'UP' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' : (state.strategy.pricing.signal === 'DOWN' ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40' : 'bg-slate-800 text-slate-300 border border-slate-700')">
-                信号: {{ state.strategy.pricing.signal === 'NONE' ? '无' : state.strategy.pricing.signal }}
-              </span>
-              <span v-if="state.strategy.pricing.last_decision_ts" class="mono text-[11px] text-slate-400 shrink-0">{{ fmtTime(state.strategy.pricing.last_decision_ts) }}</span>
-              <span class="text-xs sm:text-sm font-medium text-white leading-snug sm:truncate" :title="state.strategy.pricing.last_decision || ''">
-                {{ state.strategy.pricing.last_decision || '监听中' }}
-              </span>
-            </div>
+        <!-- ZONE 2: Compact Signal Radar (7/12) + Risk Guardrails (5/12) Side-by-Side -->
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-3 sm:gap-3.5">
+          <!-- Left 7/12: Compact Strategy Signal Radar + 2x2 Recessed Metric Boxes -->
+          <div class="lg:col-span-7 term-card p-3 sm:p-3.5 flex flex-col justify-between gap-2.5">
+            <div class="space-y-2">
+              <!-- Compact Single-Line Decision & Block Header -->
+              <div class="flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5">
+                <div class="flex items-start sm:items-center gap-1.5 min-w-0 flex-1">
+                  <span class="px-1.5 py-0.5 rounded text-[11px] font-bold shrink-0"
+                        :class="state.strategy.pricing.signal === 'UP' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' : (state.strategy.pricing.signal === 'DOWN' ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40' : 'bg-slate-800 text-slate-300 border border-slate-700')">
+                    信号:{{ state.strategy.pricing.signal === 'NONE' ? '无' : state.strategy.pricing.signal }}
+                  </span>
+                  <span v-if="state.strategy.pricing.last_decision_ts" class="mono text-[11px] text-slate-400 shrink-0">{{ fmtTime(state.strategy.pricing.last_decision_ts) }}</span>
+                  <span class="text-xs font-medium text-white leading-snug sm:truncate" :title="state.strategy.pricing.last_decision || ''">
+                    {{ state.strategy.pricing.last_decision || '监听中' }}
+                  </span>
+                </div>
 
-            <div class="flex flex-wrap items-center gap-2 text-[11px] mono shrink-0">
-              <button v-if="state.strategy.pricing.round_block_count > 0 && state.strategy.pricing.last_block_reason"
-                      type="button" @click="showBlockDetail = !showBlockDetail"
-                      class="px-2 py-0.5 rounded bg-amber-500/15 border border-amber-500/35 text-amber-300 hover:bg-amber-500/25 transition cursor-pointer"
-                      :title="fmtBlockSummary(state.strategy.pricing.round_block_reasons)">
-                拦截 {{ state.strategy.pricing.round_block_count }} ▾
-              </button>
-              <span class="text-slate-400">冷却 <strong class="text-slate-200">{{ state.strategy.cooldown_remaining }}s</strong></span>
-              <span class="text-slate-400">连亏 <strong :class="state.strategy.consecutive_losses > 0 ? 'text-rose-400' : 'text-slate-200'">{{ state.strategy.consecutive_losses }}</strong></span>
-            </div>
-          </div>
+                <div class="flex items-center gap-2 text-[11px] mono shrink-0">
+                  <button v-if="state.strategy.pricing.round_block_count > 0 && state.strategy.pricing.last_block_reason"
+                          type="button" @click="showBlockDetail = !showBlockDetail"
+                          class="px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/35 text-amber-300 hover:bg-amber-500/25 transition cursor-pointer"
+                          :title="fmtBlockSummary(state.strategy.pricing.round_block_reasons)">
+                    拦截 {{ state.strategy.pricing.round_block_count }} {{ showBlockDetail ? '▴' : '▾' }}
+                  </button>
+                  <span class="text-slate-400">冷 <strong class="text-slate-200">{{ state.strategy.cooldown_remaining }}s</strong></span>
+                  <span class="text-slate-400">连亏 <strong :class="state.strategy.consecutive_losses > 0 ? 'text-rose-400' : 'text-slate-200'">{{ state.strategy.consecutive_losses }}</strong></span>
+                </div>
+              </div>
 
-          <!-- Optional Inline Latest Block Reason Bar -->
-          <div v-if="state.strategy.pricing.round_block_count > 0 && state.strategy.pricing.last_block_reason"
-               class="px-3 py-1.5 rounded-lg bg-sub border border-line text-[11px] flex flex-wrap items-center justify-between gap-2">
-            <span class="text-slate-300 leading-snug">
-              <span class="text-amber-400 mono mr-1.5">[{{ fmtTime(state.strategy.pricing.last_block_ts) }}]</span>{{ state.strategy.pricing.last_block_reason }}
-            </span>
-            <span v-if="showBlockDetail && fmtBlockSummary(state.strategy.pricing.round_block_reasons)" class="text-[10px] text-amber-300/90 mono">
-              {{ fmtBlockSummary(state.strategy.pricing.round_block_reasons) }}
-            </span>
-          </div>
-
-          <!-- 4 Recessed Carbon Metric Boxes -->
-          <div class="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3">
-            <div class="term-box p-3">
-              <div class="flex items-center justify-between text-[11px] text-slate-400">
-                <span>净动量</span>
-                <span class="mono font-semibold" :class="(state.strategy.features.energy_accum_score || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'" title="持续能量积累得分">
-                  蓄 {{ (state.strategy.features.energy_accum_score || 0) >= 0 ? '+' : '' }}{{ Number(state.strategy.features.energy_accum_score || 0).toFixed(2) }}
+              <!-- De-duplicated Block Detail Bar: only shown when expanded OR when main decision has moved on -->
+              <div v-if="state.strategy.pricing.round_block_count > 0 && (showBlockDetail || (state.strategy.pricing.last_block_reason && state.strategy.pricing.last_block_reason !== state.strategy.pricing.last_decision))"
+                   class="px-2.5 py-1 rounded-md bg-sub border border-line text-[11px] flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+                <span v-if="state.strategy.pricing.last_block_reason && state.strategy.pricing.last_block_reason !== state.strategy.pricing.last_decision" class="text-slate-300 truncate flex-1 min-w-[180px]" :title="state.strategy.pricing.last_block_reason">
+                  <span class="text-amber-400 mono mr-1">[{{ fmtTime(state.strategy.pricing.last_block_ts) }}]</span>{{ state.strategy.pricing.last_block_reason }}
+                </span>
+                <span v-if="showBlockDetail && fmtBlockSummary(state.strategy.pricing.round_block_reasons)" class="text-[10px] text-amber-300/90 mono">
+                  {{ fmtBlockSummary(state.strategy.pricing.round_block_reasons) }}
                 </span>
               </div>
-              <div class="text-xl font-bold mono mt-1 tracking-tight" :class="state.strategy.features.net_power_bps >= 0 ? 'text-emerald-400' : 'text-rose-400'">
-                {{ state.strategy.features.net_power_bps >= 0 ? '+' : '' }}{{ state.strategy.features.net_power_bps }}
-              </div>
-              <div class="text-[11px] mono text-slate-400 mt-1 truncate">多 {{ state.strategy.features.bull_power_bps }} / 空 {{ state.strategy.features.bear_power_bps }}</div>
             </div>
 
-            <div class="term-box p-3">
-              <div class="flex items-center justify-between text-[11px] text-slate-400">
-                <span>永续流</span>
-                <span class="mono text-slate-300" title="自适应3秒净成交门槛">门 ${{ Math.round(((state.feeds.binance_perp && state.feeds.binance_perp.adaptive_cvd_3s_min_usd) || 65000)/1000) }}k</span>
+            <!-- Compact 2x2 Recessed Metric Boxes -->
+            <div class="grid grid-cols-2 gap-2 flex-1">
+              <div class="term-box px-3 py-2 flex flex-col justify-between">
+                <div class="flex items-center justify-between text-[11px] text-slate-400 gap-1">
+                  <span>净动量</span>
+                  <span class="mono font-semibold" :class="(state.strategy.features.energy_accum_score || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'" title="持续能量积累得分">
+                    蓄 {{ (state.strategy.features.energy_accum_score || 0) >= 0 ? '+' : '' }}{{ Number(state.strategy.features.energy_accum_score || 0).toFixed(2) }}
+                  </span>
+                </div>
+                <div class="flex items-baseline justify-between gap-2 mt-1">
+                  <span class="text-lg font-bold mono tracking-tight" :class="state.strategy.features.net_power_bps >= 0 ? 'text-emerald-400' : 'text-rose-400'">
+                    {{ state.strategy.features.net_power_bps >= 0 ? '+' : '' }}{{ state.strategy.features.net_power_bps }}
+                  </span>
+                  <span class="text-[10px] mono text-slate-400 truncate">多{{ state.strategy.features.bull_power_bps }} / 空{{ state.strategy.features.bear_power_bps }}</span>
+                </div>
               </div>
-              <div class="text-xl font-bold mono mt-1 tracking-tight" :class="(state.strategy.features.orderflow_score || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'">
-                {{ (state.strategy.features.orderflow_score || 0) >= 0 ? '+' : '' }}{{ state.strategy.features.orderflow_score ?? 0 }}
+
+              <div class="term-box px-3 py-2 flex flex-col justify-between">
+                <div class="flex items-center justify-between text-[11px] text-slate-400 gap-1">
+                  <span>永续流</span>
+                  <span class="mono text-slate-300" title="自适应3秒净成交门槛">门 ${{ Math.round(((state.feeds.binance_perp && state.feeds.binance_perp.adaptive_cvd_3s_min_usd) || 65000)/1000) }}k</span>
+                </div>
+                <div class="flex items-baseline justify-between gap-2 mt-1">
+                  <span class="text-lg font-bold mono tracking-tight" :class="(state.strategy.features.orderflow_score || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'">
+                    {{ (state.strategy.features.orderflow_score || 0) >= 0 ? '+' : '' }}{{ state.strategy.features.orderflow_score ?? 0 }}
+                  </span>
+                  <span class="text-[10px] mono text-slate-400 truncate">
+                    CVD {{ (((state.feeds.binance_perp && state.feeds.binance_perp.cvd_3s_imbalance) || 0)*100).toFixed(0) }}% · 量{{ Number((state.feeds.binance_perp && state.feeds.binance_perp.vol_3s_rel) || 0).toFixed(1) }}x
+                  </span>
+                </div>
               </div>
-              <div class="text-[11px] mono text-slate-400 mt-1 truncate">
-                CVD {{ (((state.feeds.binance_perp && state.feeds.binance_perp.cvd_3s_imbalance) || 0)*100).toFixed(0) }}% · 量 {{ Number((state.feeds.binance_perp && state.feeds.binance_perp.vol_3s_rel) || 0).toFixed(1) }}x
+
+              <div class="term-box px-3 py-2 flex flex-col justify-between">
+                <div class="flex items-center justify-between text-[11px] text-slate-400 gap-1">
+                  <span>价差 Z</span>
+                  <span class="mono text-sky-400">理论 {{ ((state.strategy.features.bs_up_prob ?? 0.5)*100).toFixed(0) }}%</span>
+                </div>
+                <div class="flex items-baseline justify-between gap-2 mt-1">
+                  <span class="text-lg font-bold mono tracking-tight" :class="(state.strategy.features.moneyness_z || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'">
+                    {{ (state.strategy.features.moneyness_z || 0) >= 0 ? '+' : '' }}{{ state.strategy.features.moneyness_z ?? 0 }}σ
+                  </span>
+                  <span class="text-[10px] mono text-slate-400 truncate">余波±{{ state.strategy.features.sigma_rem_bps ?? '--' }} · 敏{{ ((state.strategy.features.delta_10bps || 0)*100).toFixed(0) }}¢</span>
+                </div>
+              </div>
+
+              <div class="term-box px-3 py-2 flex flex-col justify-between">
+                <div class="flex items-center justify-between text-[11px] text-slate-400 gap-1">
+                  <span>IV / RV</span>
+                  <span class="px-1.5 py-0.5 rounded text-[10px] font-medium" :class="ivStateBadge(state.strategy.features.iv_state)">{{ fmtIvState(state.strategy.features.iv_state) }}</span>
+                </div>
+                <div class="flex items-baseline justify-between gap-2 mt-1">
+                  <span class="text-lg font-bold mono tracking-tight" :class="ivRatioColor(state.strategy.features.iv_state)">
+                    {{ Number(state.strategy.features.iv_rv_ratio || 1).toFixed(2) }}x
+                  </span>
+                  <span class="text-[10px] mono text-slate-400 truncate">IV {{ state.strategy.features.iv_1s_bps ?? '--' }} / RV {{ state.strategy.features.sigma_1s_bps ?? '--' }}</span>
+                </div>
               </div>
             </div>
+          </div>
 
-            <div class="term-box p-3">
-              <div class="flex items-center justify-between text-[11px] text-slate-400">
-                <span>价差 Z</span>
-                <span class="mono text-sky-400">理论 {{ ((state.strategy.features.bs_up_prob ?? 0.5)*100).toFixed(0) }}%</span>
+          <!-- Right 5/12: Compact Risk Guardrails & AI Auto-Governance -->
+          <div class="lg:col-span-5 term-card p-3 sm:p-3.5 flex flex-col justify-between gap-2.5 text-xs">
+            <div class="flex items-center justify-between gap-2">
+              <div class="flex items-center gap-2 min-w-0">
+                <h3 class="text-sm font-bold text-white shrink-0">风控底线</h3>
+                <span class="px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/35 text-[10px] text-emerald-300 font-medium shrink-0">自动进化</span>
+                <span class="hidden sm:inline-block px-1.5 py-0.5 rounded bg-sky-500/15 border border-sky-500/35 text-[10px] text-sky-300 font-medium truncate" title="当前最优离场模式">
+                  {{ fmtExitArm(state.learning.best_exit_arm) }}
+                </span>
               </div>
-              <div class="text-xl font-bold mono mt-1 tracking-tight" :class="(state.strategy.features.moneyness_z || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'">
-                {{ (state.strategy.features.moneyness_z || 0) >= 0 ? '+' : '' }}{{ state.strategy.features.moneyness_z ?? 0 }}σ
-              </div>
-              <div class="text-[11px] mono text-slate-400 mt-1 truncate">余波 ±{{ state.strategy.features.sigma_rem_bps ?? '--' }} · 敏 {{ ((state.strategy.features.delta_10bps || 0)*100).toFixed(0) }}¢</div>
+              <button @click="saveRisk" class="px-3 py-1 rounded-lg bg-[#4f46e5] hover:bg-indigo-500 text-white text-[11px] font-semibold shrink-0 transition">保存</button>
             </div>
 
-            <div class="term-box p-3">
-              <div class="flex items-center justify-between text-[11px] text-slate-400">
-                <span>IV / RV</span>
-                <span class="px-1.5 py-0.5 rounded text-[10px] font-medium" :class="ivStateBadge(state.strategy.features.iv_state)">{{ fmtIvState(state.strategy.features.iv_state) }}</span>
+            <!-- 3 Compact Capital Guardrail Inputs -->
+            <div class="grid grid-cols-3 gap-2">
+              <label class="text-slate-300 text-[10px] font-medium">仓位($)<input v-model.number="riskForm.unit_size_usdc" type="number" step="1" min="5" class="w-full mt-0.5 px-2 py-1 rounded-md bg-sub border border-line2 mono text-xs text-white" /></label>
+              <label class="text-slate-300 text-[10px] font-medium">日熔断($)<input v-model.number="riskForm.max_daily_loss_usdc" type="number" step="5" min="10" class="w-full mt-0.5 px-2 py-1 rounded-md bg-sub border border-line2 mono text-xs text-white" /></label>
+              <label class="text-slate-300 text-[10px] font-medium">连亏(场)<input v-model.number="riskForm.consecutive_loss_limit" type="number" min="2" max="20" class="w-full mt-0.5 px-2 py-1 rounded-md bg-sub border border-line2 mono text-xs text-white" /></label>
+            </div>
+
+            <!-- Compact Auto-Evolved Parameters + Sub-Strategies Box -->
+            <div class="term-box p-2 space-y-2">
+              <div class="grid grid-cols-4 gap-1.5 mono text-[10px]" v-if="state.learning.auto_params">
+                <div class="bg-card px-2 py-1 rounded border border-line text-center">
+                  <div class="text-slate-400 font-sans text-[9px]">基准优势</div>
+                  <div class="text-emerald-400 font-bold text-[11px]">{{ (Number(state.learning.auto_params.min_edge || 0.042)*100).toFixed(1) }}%</div>
+                </div>
+                <div class="bg-card px-2 py-1 rounded border border-line text-center">
+                  <div class="text-slate-400 font-sans text-[9px]">最高赔率</div>
+                  <div class="text-sky-400 font-bold text-[11px]">{{ Math.round(Number(state.learning.auto_params.max_entry_price || 0.75)*100) }}¢</div>
+                </div>
+                <div class="bg-card px-2 py-1 rounded border border-line text-center">
+                  <div class="text-slate-400 font-sans text-[9px]">止盈空间</div>
+                  <div class="text-white font-bold text-[11px]">{{ Math.round(Number(state.learning.auto_params.prop_tp_ratio || 0.48)*100) }}%</div>
+                </div>
+                <div class="bg-card px-2 py-1 rounded border border-line text-center">
+                  <div class="text-slate-400 font-sans text-[9px]">锁利上限</div>
+                  <div class="text-amber-400 font-bold text-[11px]">{{ Number(state.learning.auto_params.arb_max_combined_price || 0.95).toFixed(2) }}</div>
+                </div>
               </div>
-              <div class="text-xl font-bold mono mt-1 tracking-tight" :class="ivRatioColor(state.strategy.features.iv_state)">
-                {{ Number(state.strategy.features.iv_rv_ratio || 1).toFixed(2) }}x
+
+              <div class="grid grid-cols-2 gap-1.5 text-[10px]" v-if="state.learning.sub_strategies">
+                <div v-for="(st, key) in state.learning.sub_strategies" :key="key"
+                     class="px-2 py-1 rounded bg-card border border-line flex items-center justify-between gap-1">
+                  <span class="text-slate-200 truncate">{{ fmtSubStrat(key) }}</span>
+                  <span class="font-semibold shrink-0" :class="st.status === 'ACTIVE' ? 'text-emerald-400' : 'text-amber-400'">
+                    {{ st.status === 'ACTIVE' ? '● 运行' : '◐ 影子' }}
+                  </span>
+                </div>
               </div>
-              <div class="text-[11px] mono text-slate-400 mt-1 truncate">IV {{ state.strategy.features.iv_1s_bps ?? '--' }} / RV {{ state.strategy.features.sigma_1s_bps ?? '--' }}</div>
             </div>
           </div>
         </div>
 
-        <!-- ZONE 3: Bottom Orders Ledger (8/12) + Risk & Auto-Evolution (4/12) -->
-        <div class="grid grid-cols-1 lg:grid-cols-12 gap-3 sm:gap-3.5 items-start">
-          <!-- Orders Ledger -->
-          <div class="lg:col-span-8 term-card p-3.5 sm:p-4">
-            <div class="flex flex-wrap items-start justify-between gap-2.5 mb-3">
-              <div>
-                <div class="flex items-center gap-2.5">
-                  <h3 class="text-sm font-bold text-white">交易记录</h3>
-                  <label class="flex items-center gap-1.5 text-[11px] text-slate-400 cursor-pointer">
-                    <input v-model="hideCancelled" type="checkbox" class="rounded bg-sub border-line2" />
-                    <span>去撤单</span>
-                  </label>
-                </div>
-                <!-- Inline Performance Summary Strip (PolySniper style) -->
-                <div class="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-[11px] mono text-slate-400">
-                  <span>余额 <strong class="text-white">${{ Number(state.paper_balance).toFixed(2) }}</strong></span>
-                  <span>胜率 <strong class="text-white">{{ state.stats.win_rate }}%</strong> ({{ state.stats.wins }}/{{ state.stats.losses }})</span>
-                  <span>净盈亏 <strong :class="state.stats.total_pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'">{{ state.stats.total_pnl >= 0 ? '+' : '' }}${{ state.stats.total_pnl }}</strong></span>
-                  <span>盈亏比 <strong class="text-sky-400">{{ state.stats.profit_factor }}</strong></span>
-                  <span>回撤 <strong class="text-rose-400">-${{ state.stats.max_drawdown }}</strong></span>
-                  <span>24H <strong :class="state.stats.daily_pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'">{{ state.stats.daily_pnl >= 0 ? '+' : '' }}{{ state.stats.daily_pnl }}</strong></span>
-                </div>
+        <!-- ZONE 3: Full-Width Orders Ledger -->
+        <div class="term-card p-3.5 sm:p-4">
+          <div class="flex flex-wrap items-start justify-between gap-2.5 mb-3">
+            <div>
+              <div class="flex items-center gap-2.5">
+                <h3 class="text-sm font-bold text-white">交易记录</h3>
+                <label class="flex items-center gap-1.5 text-[11px] text-slate-400 cursor-pointer">
+                  <input v-model="hideCancelled" type="checkbox" class="rounded bg-sub border-line2" />
+                  <span>去撤单</span>
+                </label>
               </div>
-
-              <div class="flex flex-wrap items-center gap-1.5 text-[11px]">
-                <div class="flex gap-0.5 bg-sub p-0.5 rounded-lg border border-line2">
-                  <button v-for="m in [{k:'ALL',l:'全部'},{k:'PAPER',l:'模拟'},{k:'LIVE',l:'实盘'},{k:'SHADOW',l:'影子'}]" :key="m.k"
-                          @click="orderFilter = m.k; loadTradingData(false)"
-                          class="px-2 py-0.5 rounded-md transition whitespace-nowrap"
-                          :class="orderFilter === m.k ? 'bg-[#1E293B] text-white font-semibold' : 'text-slate-400 hover:text-slate-100'">{{ m.l }}</button>
-                </div>
-                <a :href="'/api/orders/export?mode=' + orderFilter" target="_blank"
-                   class="px-2.5 py-1 rounded-lg bg-sub hover:bg-slate-800 border border-line2 text-slate-200 transition">导出 CSV</a>
-                <button @click="resetPaper" class="px-2.5 py-1 rounded-lg bg-sub hover:bg-slate-800 border border-line2 text-slate-300 transition">重置</button>
+              <!-- Inline Performance Summary Strip -->
+              <div class="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-[11px] mono text-slate-400">
+                <span>余额 <strong class="text-white">${{ Number(state.paper_balance).toFixed(2) }}</strong></span>
+                <span>胜率 <strong class="text-white">{{ state.stats.win_rate }}%</strong> ({{ state.stats.wins }}/{{ state.stats.losses }})</span>
+                <span>净盈亏 <strong :class="state.stats.total_pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'">{{ state.stats.total_pnl >= 0 ? '+' : '' }}${{ state.stats.total_pnl }}</strong></span>
+                <span>盈亏比 <strong class="text-sky-400">{{ state.stats.profit_factor }}</strong></span>
+                <span>回撤 <strong class="text-rose-400">-${{ state.stats.max_drawdown }}</strong></span>
+                <span>24H <strong :class="state.stats.daily_pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'">{{ state.stats.daily_pnl >= 0 ? '+' : '' }}{{ state.stats.daily_pnl }}</strong></span>
               </div>
             </div>
 
-            <!-- MOBILE Order Cards (< md) -->
-            <div class="md:hidden space-y-2 max-h-[440px] overflow-y-auto pr-0.5">
-              <div v-for="o in visibleOrders" :key="o.order_id"
-                   @click="expandedOrderId = (expandedOrderId === o.order_id ? '' : o.order_id)"
-                   class="term-box p-2.5 space-y-1.5 active:bg-slate-900 transition">
-                <div class="flex items-center justify-between gap-2">
-                  <div class="flex items-center gap-1.5 min-w-0">
-                    <span class="px-1.5 py-0.5 rounded text-[10px] font-bold mono shrink-0"
-                          :class="o.side === 'UP' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300'">{{ o.side }}</span>
-                    <span class="text-xs text-white font-medium truncate">{{ fmtArm(o.arm_id) }}</span>
-                    <span class="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] text-slate-300 shrink-0">{{ fmtMode(o.mode) }}</span>
-                  </div>
-                  <span class="mono text-sm font-bold shrink-0" :class="o.pnl_usdc > 0 ? 'text-emerald-400' : (o.pnl_usdc < 0 ? 'text-rose-400' : 'text-slate-400')">
-                    {{ o.pnl_usdc > 0 ? '+' : '' }}{{ Number(o.pnl_usdc).toFixed(2) }}
-                  </span>
-                </div>
-                <div class="flex items-center justify-between gap-2 text-[11px] mono text-slate-400">
-                  <div class="flex items-center gap-2 flex-wrap">
-                    <span>{{ fmtTime(o.created_at) }}</span>
-                    <span class="text-slate-200">{{ o.limit_price }}/{{ o.fill_price ?? '--' }}<span v-if="o.exit_price" class="text-amber-400">→{{ o.exit_price }}</span></span>
-                    <span class="text-white">${{ o.size_usdc }}</span>
-                    <span class="text-sky-400">+{{ (o.edge*100).toFixed(1) }}%</span>
-                  </div>
-                  <div class="flex items-center gap-1.5 shrink-0 font-sans text-[11px]">
-                    <span :class="o.awaiting_official ? 'text-amber-400' : statusColor(o.status, o.exit_reason)">
-                      {{ o.awaiting_official ? '待确权' : (o.status === 'CLOSED' && o.exit_reason ? o.exit_reason : fmtStatus(o.status)) }}
-                    </span>
-                    <span v-if="o.official_outcome" class="mono font-bold" :class="o.official_outcome === 'UP' ? 'text-emerald-400' : 'text-rose-400'">{{ o.official_outcome }}</span>
-                    <span v-else-if="o.awaiting_official && o.provisional_outcome" class="text-[10px] text-amber-400">预{{ o.provisional_outcome }}</span>
-                  </div>
-                </div>
-                <div v-if="expandedOrderId === o.order_id && o.notes" class="pt-1.5 border-t border-line text-[10px] text-slate-400 leading-relaxed break-all">
-                  <div>盘口: {{ o.book_bid && o.book_ask ? (o.book_bid.toFixed(2) + '/' + o.book_ask.toFixed(2)) : '--' }}</div>
-                  <div class="mt-0.5">{{ o.notes }}</div>
-                </div>
+            <div class="flex flex-wrap items-center gap-1.5 text-[11px]">
+              <div class="flex gap-0.5 bg-sub p-0.5 rounded-lg border border-line2">
+                <button v-for="m in [{k:'ALL',l:'全部'},{k:'PAPER',l:'模拟'},{k:'LIVE',l:'实盘'},{k:'SHADOW',l:'影子'}]" :key="m.k"
+                        @click="orderFilter = m.k; loadTradingData(false)"
+                        class="px-2 py-0.5 rounded-md transition whitespace-nowrap"
+                        :class="orderFilter === m.k ? 'bg-[#1E293B] text-white font-semibold' : 'text-slate-400 hover:text-slate-100'">{{ m.l }}</button>
               </div>
-              <div v-if="!visibleOrders.length" class="py-10 text-center text-xs text-slate-500">暂无订单</div>
-            </div>
-
-            <!-- DESKTOP Full Orders Table (>= md) -->
-            <div class="hidden md:block overflow-x-auto max-h-[390px] overflow-y-auto">
-              <table class="w-full text-xs text-left whitespace-nowrap">
-                <thead class="text-[11px] text-slate-400 border-b border-line sticky top-0 bg-card font-semibold">
-                  <tr>
-                    <th class="py-2 pr-2">时间</th>
-                    <th class="py-2 pr-2">模式</th>
-                    <th class="py-2 pr-2">方向</th>
-                    <th class="py-2 pr-2">方式</th>
-                    <th class="py-2 pr-2">盘口</th>
-                    <th class="py-2 pr-2">挂/成/平</th>
-                    <th class="py-2 pr-2">金额</th>
-                    <th class="py-2 pr-2">优势</th>
-                    <th class="py-2 pr-2">状态</th>
-                    <th class="py-2 pr-2">结果</th>
-                    <th class="py-2 text-right">盈亏</th>
-                  </tr>
-                </thead>
-                <tbody class="divide-y divide-line mono">
-                  <tr v-for="o in visibleOrders" :key="o.order_id" :title="o.notes || ''" class="hover:bg-[#131B2B] transition-colors">
-                    <td class="py-2 pr-2 text-slate-400">{{ fmtTime(o.created_at) }}</td>
-                    <td class="py-2 pr-2"><span class="px-1.5 py-0.5 rounded bg-sub border border-line text-[10px] text-slate-300 font-sans">{{ fmtMode(o.mode) }}</span></td>
-                    <td class="py-2 pr-2 font-bold" :class="o.side === 'UP' ? 'text-emerald-400' : 'text-rose-400'">{{ o.side }}</td>
-                    <td class="py-2 pr-2 text-slate-200 font-sans">{{ fmtArm(o.arm_id) }}</td>
-                    <td class="py-2 pr-2 text-slate-400">{{ o.book_bid && o.book_ask ? (o.book_bid.toFixed(2) + '/' + o.book_ask.toFixed(2)) : '--' }}</td>
-                    <td class="py-2 pr-2 text-white">{{ o.limit_price }}/{{ o.fill_price ?? '--' }}<span v-if="o.exit_price" class="text-amber-400">→{{ o.exit_price }}</span></td>
-                    <td class="py-2 pr-2 text-white">${{ o.size_usdc }}</td>
-                    <td class="py-2 pr-2 text-sky-400">+{{ (o.edge*100).toFixed(1) }}%</td>
-                    <td class="py-2 pr-2 font-sans" :class="o.awaiting_official ? 'text-amber-400' : statusColor(o.status, o.exit_reason)">
-                      {{ o.awaiting_official ? '待确权' : (o.status === 'CLOSED' && o.exit_reason ? o.exit_reason : fmtStatus(o.status)) }}
-                    </td>
-                    <td class="py-2 pr-2">
-                      <span v-if="o.official_outcome" class="font-bold" :class="o.official_outcome === 'UP' ? 'text-emerald-400' : 'text-rose-400'">{{ o.official_outcome }}</span>
-                      <span v-else-if="o.awaiting_official && o.provisional_outcome" class="text-[11px] text-amber-400 font-sans">预估 {{ o.provisional_outcome }}</span>
-                      <span v-else-if="o.awaiting_official" class="text-[11px] text-amber-400 font-sans">确权中</span>
-                      <span v-else class="text-slate-500">--</span>
-                    </td>
-                    <td class="py-2 text-right font-bold" :class="o.pnl_usdc > 0 ? 'text-emerald-400' : (o.pnl_usdc < 0 ? 'text-rose-400' : 'text-slate-400')">
-                      {{ o.pnl_usdc > 0 ? '+' : '' }}{{ Number(o.pnl_usdc).toFixed(2) }}
-                    </td>
-                  </tr>
-                  <tr v-if="!visibleOrders.length"><td colspan="11" class="py-10 text-center text-slate-500 font-sans">暂无订单</td></tr>
-                </tbody>
-              </table>
+              <a :href="'/api/orders/export?mode=' + orderFilter" target="_blank"
+                 class="px-2.5 py-1 rounded-lg bg-sub hover:bg-slate-800 border border-line2 text-slate-200 transition">导出 CSV</a>
+              <button @click="resetPaper" class="px-2.5 py-1 rounded-lg bg-sub hover:bg-slate-800 border border-line2 text-slate-300 transition">重置</button>
             </div>
           </div>
 
-          <!-- Risk Guardrails & AI Auto-Governance -->
-          <div class="lg:col-span-4 term-card p-3.5 sm:p-4 space-y-3 text-xs">
-            <div class="flex items-center justify-between gap-2">
-              <div class="flex items-center gap-2 min-w-0">
-                <h3 class="text-sm font-bold text-white shrink-0">风控底线</h3>
-                <span class="px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/35 text-[10px] text-emerald-300 font-medium">自动进化</span>
-              </div>
-              <button @click="saveRisk" class="px-3.5 py-1 rounded-lg bg-[#4f46e5] hover:bg-indigo-500 text-white text-xs font-semibold shrink-0 transition">保存</button>
-            </div>
-
-            <div class="grid grid-cols-3 gap-2">
-              <label class="text-slate-300 text-[11px] font-medium">仓位($)<input v-model.number="riskForm.unit_size_usdc" type="number" step="1" min="5" class="w-full mt-1 px-2 py-1.5 rounded-md bg-sub border border-line2 mono text-white" /></label>
-              <label class="text-slate-300 text-[11px] font-medium">日熔断($)<input v-model.number="riskForm.max_daily_loss_usdc" type="number" step="5" min="10" class="w-full mt-1 px-2 py-1.5 rounded-md bg-sub border border-line2 mono text-white" /></label>
-              <label class="text-slate-300 text-[11px] font-medium">连亏(场)<input v-model.number="riskForm.consecutive_loss_limit" type="number" min="2" max="20" class="w-full mt-1 px-2 py-1.5 rounded-md bg-sub border border-line2 mono text-white" /></label>
-            </div>
-
-            <div class="term-box p-3 space-y-2.5">
-              <div class="flex items-center justify-between gap-2 text-[11px]">
-                <span class="text-slate-400">最优离场</span>
-                <span class="px-2 py-0.5 rounded bg-sky-500/15 border border-sky-500/35 text-sky-300 font-semibold truncate">
-                  {{ fmtExitArm(state.learning.best_exit_arm) }}
+          <!-- MOBILE Order Cards (< md) -->
+          <div class="md:hidden space-y-2 max-h-[440px] overflow-y-auto pr-0.5">
+            <div v-for="o in visibleOrders" :key="o.order_id"
+                 @click="expandedOrderId = (expandedOrderId === o.order_id ? '' : o.order_id)"
+                 class="term-box p-2.5 space-y-1.5 active:bg-slate-900 transition">
+              <div class="flex items-center justify-between gap-2">
+                <div class="flex items-center gap-1.5 min-w-0">
+                  <span class="px-1.5 py-0.5 rounded text-[10px] font-bold mono shrink-0"
+                        :class="o.side === 'UP' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300'">{{ o.side }}</span>
+                  <span class="text-xs text-white font-medium truncate">{{ fmtArm(o.arm_id) }}</span>
+                  <span class="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] text-slate-300 shrink-0">{{ fmtMode(o.mode) }}</span>
+                </div>
+                <span class="mono text-sm font-bold shrink-0" :class="o.pnl_usdc > 0 ? 'text-emerald-400' : (o.pnl_usdc < 0 ? 'text-rose-400' : 'text-slate-400')">
+                  {{ o.pnl_usdc > 0 ? '+' : '' }}{{ Number(o.pnl_usdc).toFixed(2) }}
                 </span>
               </div>
-
-              <div class="grid grid-cols-2 gap-1.5 pt-2 border-t border-line mono text-[11px]" v-if="state.learning.auto_params">
-                <div class="bg-card px-2.5 py-1.5 rounded border border-line flex justify-between">
-                  <span class="text-slate-400 font-sans">基准优势</span>
-                  <span class="text-emerald-400 font-bold">{{ (Number(state.learning.auto_params.min_edge || 0.042)*100).toFixed(1) }}%</span>
+              <div class="flex items-center justify-between gap-2 text-[11px] mono text-slate-400">
+                <div class="flex items-center gap-2 flex-wrap">
+                  <span>{{ fmtTime(o.created_at) }}</span>
+                  <span class="text-slate-200">{{ o.limit_price }}/{{ o.fill_price ?? '--' }}<span v-if="o.exit_price" class="text-amber-400">→{{ o.exit_price }}</span></span>
+                  <span class="text-white">${{ o.size_usdc }}</span>
+                  <span class="text-sky-400">+{{ (o.edge*100).toFixed(1) }}%</span>
                 </div>
-                <div class="bg-card px-2.5 py-1.5 rounded border border-line flex justify-between">
-                  <span class="text-slate-400 font-sans">最高赔率</span>
-                  <span class="text-sky-400 font-bold">{{ Math.round(Number(state.learning.auto_params.max_entry_price || 0.75)*100) }}¢</span>
-                </div>
-                <div class="bg-card px-2.5 py-1.5 rounded border border-line flex justify-between">
-                  <span class="text-slate-400 font-sans">止盈空间</span>
-                  <span class="text-white font-bold">{{ Math.round(Number(state.learning.auto_params.prop_tp_ratio || 0.48)*100) }}%</span>
-                </div>
-                <div class="bg-card px-2.5 py-1.5 rounded border border-line flex justify-between">
-                  <span class="text-slate-400 font-sans">锁利上限</span>
-                  <span class="text-amber-400 font-bold">{{ Number(state.learning.auto_params.arb_max_combined_price || 0.95).toFixed(2) }}</span>
+                <div class="flex items-center gap-1.5 shrink-0 font-sans text-[11px]">
+                  <span :class="o.awaiting_official ? 'text-amber-400' : statusColor(o.status, o.exit_reason)">
+                    {{ o.awaiting_official ? '待确权' : (o.status === 'CLOSED' && o.exit_reason ? o.exit_reason : fmtStatus(o.status)) }}
+                  </span>
+                  <span v-if="o.official_outcome" class="mono font-bold" :class="o.official_outcome === 'UP' ? 'text-emerald-400' : 'text-rose-400'">{{ o.official_outcome }}</span>
+                  <span v-else-if="o.awaiting_official && o.provisional_outcome" class="text-[10px] text-amber-400">预{{ o.provisional_outcome }}</span>
                 </div>
               </div>
-
-              <div class="pt-2 border-t border-line space-y-1.5" v-if="state.learning.sub_strategies">
-                <div class="text-[10px] text-slate-400">子策略</div>
-                <div class="grid grid-cols-2 gap-1.5 text-[11px]">
-                  <div v-for="(st, key) in state.learning.sub_strategies" :key="key"
-                       class="px-2.5 py-1.5 rounded bg-card border border-line flex items-center justify-between gap-1">
-                    <span class="text-slate-200 text-[10px] truncate">{{ fmtSubStrat(key) }}</span>
-                    <span class="text-[10px] font-semibold shrink-0" :class="st.status === 'ACTIVE' ? 'text-emerald-400' : 'text-amber-400'">
-                      {{ st.status === 'ACTIVE' ? '● 运行' : '◐ 影子' }}
-                    </span>
-                  </div>
-                </div>
+              <div v-if="expandedOrderId === o.order_id && o.notes" class="pt-1.5 border-t border-line text-[10px] text-slate-400 leading-relaxed break-all">
+                <div>盘口: {{ o.book_bid && o.book_ask ? (o.book_bid.toFixed(2) + '/' + o.book_ask.toFixed(2)) : '--' }}</div>
+                <div class="mt-0.5">{{ o.notes }}</div>
               </div>
             </div>
+            <div v-if="!visibleOrders.length" class="py-10 text-center text-xs text-slate-500">暂无订单</div>
+          </div>
+
+          <!-- DESKTOP Full-Width Orders Table (>= md) -->
+          <div class="hidden md:block overflow-x-auto max-h-[420px] overflow-y-auto">
+            <table class="w-full text-xs text-left whitespace-nowrap">
+              <thead class="text-[11px] text-slate-400 border-b border-line sticky top-0 bg-card font-semibold">
+                <tr>
+                  <th class="py-2 pr-3">时间</th>
+                  <th class="py-2 pr-3">模式</th>
+                  <th class="py-2 pr-3">方向</th>
+                  <th class="py-2 pr-3">方式</th>
+                  <th class="py-2 pr-3">盘口</th>
+                  <th class="py-2 pr-3">挂/成/平</th>
+                  <th class="py-2 pr-3">金额</th>
+                  <th class="py-2 pr-3">优势</th>
+                  <th class="py-2 pr-3">状态</th>
+                  <th class="py-2 pr-3">结果</th>
+                  <th class="py-2 text-right">盈亏</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-line mono">
+                <tr v-for="o in visibleOrders" :key="o.order_id" :title="o.notes || ''" class="hover:bg-[#131B2B] transition-colors">
+                  <td class="py-2 pr-3 text-slate-400">{{ fmtTime(o.created_at) }}</td>
+                  <td class="py-2 pr-3"><span class="px-1.5 py-0.5 rounded bg-sub border border-line text-[10px] text-slate-300 font-sans">{{ fmtMode(o.mode) }}</span></td>
+                  <td class="py-2 pr-3 font-bold" :class="o.side === 'UP' ? 'text-emerald-400' : 'text-rose-400'">{{ o.side }}</td>
+                  <td class="py-2 pr-3 text-slate-200 font-sans">{{ fmtArm(o.arm_id) }}</td>
+                  <td class="py-2 pr-3 text-slate-400">{{ o.book_bid && o.book_ask ? (o.book_bid.toFixed(2) + '/' + o.book_ask.toFixed(2)) : '--' }}</td>
+                  <td class="py-2 pr-3 text-white">{{ o.limit_price }}/{{ o.fill_price ?? '--' }}<span v-if="o.exit_price" class="text-amber-400">→{{ o.exit_price }}</span></td>
+                  <td class="py-2 pr-3 text-white">${{ o.size_usdc }}</td>
+                  <td class="py-2 pr-3 text-sky-400">+{{ (o.edge*100).toFixed(1) }}%</td>
+                  <td class="py-2 pr-3 font-sans" :class="o.awaiting_official ? 'text-amber-400' : statusColor(o.status, o.exit_reason)">
+                    {{ o.awaiting_official ? '待确权' : (o.status === 'CLOSED' && o.exit_reason ? o.exit_reason : fmtStatus(o.status)) }}
+                  </td>
+                  <td class="py-2 pr-3">
+                    <span v-if="o.official_outcome" class="font-bold" :class="o.official_outcome === 'UP' ? 'text-emerald-400' : 'text-rose-400'">{{ o.official_outcome }}</span>
+                    <span v-else-if="o.awaiting_official && o.provisional_outcome" class="text-[11px] text-amber-400 font-sans">预估 {{ o.provisional_outcome }}</span>
+                    <span v-else-if="o.awaiting_official" class="text-[11px] text-amber-400 font-sans">确权中</span>
+                    <span v-else class="text-slate-500">--</span>
+                  </td>
+                  <td class="py-2 text-right font-bold" :class="o.pnl_usdc > 0 ? 'text-emerald-400' : (o.pnl_usdc < 0 ? 'text-rose-400' : 'text-slate-400')">
+                    {{ o.pnl_usdc > 0 ? '+' : '' }}{{ Number(o.pnl_usdc).toFixed(2) }}
+                  </td>
+                </tr>
+                <tr v-if="!visibleOrders.length"><td colspan="11" class="py-10 text-center text-slate-500 font-sans">暂无订单</td></tr>
+              </tbody>
+            </table>
           </div>
         </div>
       </section>
