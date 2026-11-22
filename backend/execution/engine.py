@@ -60,6 +60,7 @@ class QuantTradingEngine:
 
         # Real-time pricing & signal state
         self.basis_ema: float = 0.0
+        self._last_cex_basis_ts: float = 0.0
         self.last_signal_ts: float = 0.0
         self.last_cancel_ts: float = 0.0
         self.last_cancel_side: str = ""
@@ -160,10 +161,12 @@ class QuantTradingEngine:
             t.cancel()
         await asyncio.gather(*self._tasks, return_exceptions=True)
         await self.oracle.close()
+        await self.clob.close()
 
     def _on_cex_price(self, exchange: str, price: float, ts: float):
-        if self.oracle.latest_spot > 0:
-            diff = price - float(self.oracle.latest_spot)
+        if self.oracle.latest_spot_float > 0.0 and (self.basis_ema == 0.0 or (ts - self._last_cex_basis_ts) >= 0.25):
+            self._last_cex_basis_ts = ts
+            diff = price - self.oracle.latest_spot_float
             self.basis_ema = diff if self.basis_ema == 0.0 else (0.95 * self.basis_ema + 0.05 * diff)
 
     def _on_oracle_tick(self, kind: str, price: Decimal, ts: float, is_snapshot: bool = False, source_name: str = "RTDS"):
@@ -563,6 +566,7 @@ class QuantTradingEngine:
                         "net_power_bps": snap["net_power_bps"],
                         "model_up_prob": round(model_up_p * 100, 1),
                         "pm_up_mid": round((up_book["mid"] or 0.5) * 100, 1),
+                        "pm_down_mid": round((dn_book["mid"] or 0.5) * 100, 1),
                     })
 
                 # Pre-fetch next round's Token IDs 30s before rollover so new round starts with live quotes immediately

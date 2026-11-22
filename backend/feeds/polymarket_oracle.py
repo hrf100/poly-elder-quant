@@ -6,6 +6,7 @@ from typing import Callable, Optional
 import aiohttp
 import websockets
 
+from backend.fast_json import loads as fast_loads
 from backend.config import CLOB_API_BASE, GAMMA_API_BASE, POLYBOLT_WS_URL, RTDS_WS_URL
 
 
@@ -29,6 +30,8 @@ class PolymarketOracleSync:
         self.creds: Optional[dict] = None
         self.latest_spot = Decimal("0")
         self.latest_twap60 = Decimal("0")
+        self.latest_spot_float: float = 0.0
+        self.latest_twap60_float: float = 0.0
         self.active_oracle_source: str = "NONE"
         self.twap_history: list[tuple[float, Decimal]] = []
         self._stop = False
@@ -170,8 +173,10 @@ class PolymarketOracleSync:
         self.active_oracle_source = source_name
         if kind == "spot":
             self.latest_spot = price
+            self.latest_spot_float = float(price)
         elif kind == "twap60":
             self.latest_twap60 = price
+            self.latest_twap60_float = float(price)
             self.twap_history.append((ev_sec, price))
             if len(self.twap_history) > 1000:
                 self.twap_history = self.twap_history[-700:]
@@ -456,22 +461,23 @@ class PolymarketOracleSync:
                         "connected": True,
                         "note": "已直连 Polymarket 公开 Chainlink 60s TWAP 真实流",
                     })
-                    last_ping = time.time()
-
-                    while not self._stop:
-                        now = time.time()
-                        if now - last_ping >= 5.0:
-                            await ws.send("PING")
-                            last_ping = now
+                    async def _rtds_pinger():
                         try:
-                            raw = await asyncio.wait_for(ws.recv(), timeout=2.0)
-                        except asyncio.TimeoutError:
-                            continue
+                            while not self._stop:
+                                await asyncio.sleep(5.0)
+                                await ws.send("PING")
+                        except Exception:
+                            pass
 
+                    ping_task = asyncio.create_task(_rtds_pinger())
+                    try:
+                      async for raw in ws:
+                        if self._stop:
+                            break
                         if not raw or raw in ("PONG", "pong"):
                             continue
                         try:
-                            msg = json.loads(raw)
+                            msg = fast_loads(raw)
                         except Exception:
                             continue
 
@@ -511,6 +517,8 @@ class PolymarketOracleSync:
                                 "last_error": "",
                             })
                             self._record_oracle_price(kind, price, ev_sec, "RTDS", is_snapshot)
+                    finally:
+                        ping_task.cancel()
             except Exception as e:
                 self.status["rtds"]["connected"] = False
                 self.status["rtds"]["errors"] += 1
@@ -573,7 +581,7 @@ class PolymarketOracleSync:
                             raw = await asyncio.wait_for(ws.recv(), timeout=35.0)
                         except asyncio.TimeoutError:
                             continue
-                        msg = json.loads(raw)
+                        msg = fast_loads(raw)
                         op = msg.get("op")
                         if op == "error":
                             self.status["polybolt"]["note"] = f"订阅错误: {msg.get('message') or msg.get('code') or str(msg)[:60]}"

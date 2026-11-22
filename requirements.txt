@@ -11,3 +11,4 @@ py-clob-client>=0.18.0
 eth-account>=0.13.0
 scikit-learn>=1.5.0
 lightgbm>=4.5.0
+orjson>=3.10.0

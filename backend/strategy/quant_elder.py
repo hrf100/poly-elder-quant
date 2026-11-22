@@ -50,6 +50,13 @@ class QuantElderFeatureEngine:
         self.active_window_ts: int = 0
         self.round_prices: list[float] = []
         self.round_open_price: float = 0.0
+        self._round_max_p: float = 0.0
+        self._round_min_p: float = 0.0
+        self._round_total_path: float = 0.0
+        self._atr_med_tick: int = 0
+        self._cached_atr_base: float = 1.0
+        self._vrp_med_tick: int = 0
+        self._cached_vrp_base: float = 1.15
         self.final_60s_oracle_prices: list[float] = []
 
         self.latest_snapshot: dict = {
@@ -116,6 +123,9 @@ class QuantElderFeatureEngine:
         self.active_window_ts = window_ts
         self.round_prices = [open_price] if open_price > 0 else []
         self.round_open_price = open_price
+        self._round_max_p = open_price if open_price > 0 else 0.0
+        self._round_min_p = open_price if open_price > 0 else 0.0
+        self._round_total_path = 0.0
         self.final_60s_oracle_prices = []
 
     def _compute_iv_metrics(
@@ -133,8 +143,13 @@ class QuantElderFeatureEngine:
         - Disables raw inversion inside final 65s where sqrt_t_eff collapses (prevents 11x+ IV explosions).
         - Clamps single-tick IV & smoothly decays iv_1s_ema toward (RV * VRP) during ATM/late carry states.
         """
-        vrp_base = round(float(median(self.vrp_ratio_history)), 3) if len(self.vrp_ratio_history) >= 20 else 1.15
-        vrp_base = max(0.85, min(1.65, vrp_base))
+        self._vrp_med_tick += 1
+        if len(self.vrp_ratio_history) >= 20:
+            if self._vrp_med_tick % 10 == 1:
+                self._cached_vrp_base = max(0.85, min(1.65, round(float(median(self.vrp_ratio_history)), 3)))
+            vrp_base = self._cached_vrp_base
+        else:
+            vrp_base = 1.15
         rv_safe = max(0.35, float(rv_1s_bps))
 
         def _carry(state_label: str) -> dict:
@@ -253,6 +268,16 @@ class QuantElderFeatureEngine:
 
         if self.round_open_price <= 0:
             self.round_open_price = spot_price
+        if self.round_prices:
+            self._round_total_path += abs(spot_price - self.round_prices[-1])
+            if spot_price > self._round_max_p:
+                self._round_max_p = spot_price
+            if spot_price < self._round_min_p:
+                self._round_min_p = spot_price
+        else:
+            self._round_max_p = spot_price
+            self._round_min_p = spot_price
+            self._round_total_path = 0.0
         self.round_prices.append(spot_price)
 
         # 1. EMA calculation
@@ -278,8 +303,11 @@ class QuantElderFeatureEngine:
         atr_slice = list(self.sec_abs_returns)[-self.atr_window:]
         atr_bps = max(0.20, sum(atr_slice) / len(atr_slice)) if atr_slice else 1.0
         self.atr_baseline_hist.append(atr_bps)
+        self._atr_med_tick += 1
         if len(self.atr_baseline_hist) >= 20:
-            atr_baseline_bps = max(0.25, min(8.0, float(median(self.atr_baseline_hist))))
+            if self._atr_med_tick % 10 == 1 or len(self.atr_baseline_hist) <= 30:
+                self._cached_atr_base = max(0.25, min(8.0, float(median(self.atr_baseline_hist))))
+            atr_baseline_bps = self._cached_atr_base
         else:
             atr_baseline_bps = max(0.35, min(8.0, atr_bps))
         vol_regime_ratio = atr_bps / max(0.25, atr_baseline_bps)
@@ -296,15 +324,15 @@ class QuantElderFeatureEngine:
         else:
             sigma_1s_bps = max(0.8, atr_bps * 1.25)
 
-        # 4. Kaufman Path Efficiency Ratio (ER)
+        # 4. Kaufman Path Efficiency Ratio (O(1) incremental)
         if len(self.round_prices) >= 6:
             net_move = abs(self.round_prices[-1] - self.round_prices[0])
-            total_path = sum(abs(self.round_prices[i] - self.round_prices[i - 1]) for i in range(1, len(self.round_prices)))
+            total_path = self._round_total_path
             path_efficiency = min(1.0, net_move / total_path) if total_path > 1e-9 else 0.0
         else:
             path_efficiency = 0.5
 
-        # 5. Basis-aligned oracle spot & Distance-to-Strike
+        # 5. Basis-aligned oracle spot & Distance-to-Strike (O(1) MFE/MAE)
         ref_strike = strike_price if strike_price > 0 else self.round_open_price
         oracle_equiv_spot = spot_price - basis_offset
         dist_to_strike_usd = (oracle_equiv_spot - ref_strike) if ref_strike > 0 else 0.0
@@ -312,9 +340,8 @@ class QuantElderFeatureEngine:
         dist_to_strike_atr = dist_to_strike_bps / max(0.5, atr_bps)
 
         if ref_strike > 0 and self.round_prices:
-            adj_prices = [p - basis_offset for p in self.round_prices]
-            mfe_bps = (max(adj_prices) - ref_strike) / ref_strike * 10000.0
-            mae_bps = (min(adj_prices) - ref_strike) / ref_strike * 10000.0
+            mfe_bps = ((self._round_max_p - basis_offset) - ref_strike) / ref_strike * 10000.0
+            mae_bps = ((self._round_min_p - basis_offset) - ref_strike) / ref_strike * 10000.0
         else:
             mfe_bps, mae_bps = 0.0, 0.0
 

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover" />
-  <meta name="theme-color" content="#090e1a" />
+  <meta name="theme-color" content="#070B12" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>PolyQuant BTC 5m</title>
@@ -16,39 +16,35 @@
       theme: {
         extend: {
           colors: {
-            base: '#090e1a',
-            panel: '#101827',
-            card: '#141e30',
-            sub: '#0e1625',
-            line: '#223047',
+            canvas: '#070B12',
+            panel: '#0B101B',
+            card: '#0E1420',
+            sub: '#070B12',
+            line: '#1E293B',
+            line2: '#334155',
           }
         }
       }
     }
   </script>
   <style>
-    html, body { background: #090e1a; color: #e2e8f0; font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; overflow-x: hidden; -webkit-tap-highlight-color: transparent; }
-    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-variant-numeric: tabular-nums; }
-    /* PC 端强制高对比：同时写 color 与 -webkit-text-fill-color，避免字体/扩展把数字渲成黑块 */
-    .kpi-val, .kpi-pos, .kpi-neg, .kpi-accent, .kpi-warn, .kpi-fee, .kpi-muted {
-      font-weight: 700;
-    }
-    .kpi-val { color: #f1f5f9 !important; -webkit-text-fill-color: #f1f5f9 !important; }
-    .kpi-pos { color: #4ade80 !important; -webkit-text-fill-color: #4ade80 !important; }
-    .kpi-neg { color: #fb7185 !important; -webkit-text-fill-color: #fb7185 !important; }
-    .kpi-accent { color: #a5b4fc !important; -webkit-text-fill-color: #a5b4fc !important; }
-    .kpi-warn { color: #fbbf24 !important; -webkit-text-fill-color: #fbbf24 !important; }
-    .kpi-fee, .kpi-muted { color: #94a3b8 !important; -webkit-text-fill-color: #94a3b8 !important; font-weight: 500; }
-    /* 兜底：暗色卡片里的粗体等宽数字默认提亮 */
-    .bg-card .font-bold.mono,
-    .bg-sub .font-bold.mono,
-    .bg-sub\/90 .font-bold.mono,
-    .bg-sub\/70 .font-bold.mono {
+    html, body {
+      background: #070B12;
       color: #e2e8f0;
-      -webkit-text-fill-color: #e2e8f0;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      overflow-x: hidden;
+      -webkit-tap-highlight-color: transparent;
     }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-variant-numeric: tabular-nums; }
+    .term-card { background: #0E1420; border: 1px solid #1E293B; border-radius: 0.75rem; }
+    .term-box { background: #070B12; border: 1px solid #1B2536; border-radius: 0.5rem; }
+    .chart-well { background: #070B12; border: 1px solid #1B2536; border-radius: 0.5rem; overflow: hidden; }
+    input, select { transition: border-color 0.15s ease, box-shadow 0.15s ease; }
+    input:focus, select:focus { outline: none; border-color: #6366f1 !important; box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.25); }
     ::-webkit-scrollbar { width: 5px; height: 5px; }
-    ::-webkit-scrollbar-thumb { background: #2c3b54; border-radius: 3px; }
+    ::-webkit-scrollbar-track { background: #070B12; }
+    ::-webkit-scrollbar-thumb { background: #1E293B; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #334155; }
     .no-scrollbar::-webkit-scrollbar { display: none; }
     .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     .safe-pb { padding-bottom: env(safe-area-inset-bottom, 0px); }
@@ -59,27 +55,27 @@
 </head>
 <body class="min-h-screen antialiased">
 <div id="app">
-  <!-- Toast (mobile full-width inset, desktop top-right) -->
-  <div v-if="toast.show" class="fixed top-3 left-3 right-3 sm:left-auto sm:top-4 sm:right-4 z-50 px-4 py-2.5 rounded-lg shadow-xl text-xs font-medium border transition-all text-center sm:text-left"
-       :class="toast.type === 'error' ? 'bg-red-950/95 border-red-500/60 text-red-200' : 'bg-emerald-950/95 border-emerald-500/60 text-emerald-200'">
+  <!-- Toast -->
+  <div v-if="toast.show" class="fixed top-3 left-3 right-3 sm:left-auto sm:top-4 sm:right-4 z-50 px-4 py-2.5 rounded-lg shadow-2xl text-xs font-medium border transition-all text-center sm:text-left"
+       :class="toast.type === 'error' ? 'bg-[#1f0d12]/95 border-rose-500/60 text-rose-200' : 'bg-[#091c15]/95 border-emerald-500/60 text-emerald-200'">
     {{ toast.msg }}
   </div>
 
   <!-- Login View -->
-  <div v-if="!authenticated" class="min-h-screen flex items-center justify-center p-4">
-    <div class="w-full max-w-sm bg-card border border-line rounded-2xl p-6 sm:p-7 shadow-2xl">
+  <div v-if="!authenticated" class="min-h-screen flex items-center justify-center p-4 bg-canvas">
+    <div class="w-full max-w-sm term-card p-6 sm:p-7 shadow-2xl">
       <div class="flex items-center gap-3 mb-6">
-        <div class="w-9 h-9 rounded-xl bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400 font-bold">Q</div>
+        <div class="w-9 h-9 rounded-xl bg-indigo-500/15 border border-indigo-500/40 flex items-center justify-center text-indigo-400 font-bold mono">Q</div>
         <div>
-          <h1 class="text-lg font-bold text-white">PolyQuant BTC 5m</h1>
+          <h1 class="text-lg font-bold text-white tracking-tight">PolyQuant <span class="text-indigo-400">5m</span></h1>
           <p class="text-[11px] text-slate-400">BTC 5m 控制台</p>
         </div>
       </div>
       <form @submit.prevent="doLogin" class="space-y-4">
         <input v-model="loginPassword" type="password" placeholder="访问密码" required
-               class="w-full px-3.5 py-2.5 rounded-lg bg-sub border border-slate-700 text-sm text-white focus:outline-none focus:border-indigo-500" />
+               class="w-full px-3.5 py-2.5 rounded-lg bg-sub border border-line2 text-sm text-white" />
         <button type="submit" :disabled="loggingIn"
-                class="w-full py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-sm text-white font-semibold transition disabled:opacity-50">
+                class="w-full py-2.5 rounded-lg bg-[#4f46e5] hover:bg-indigo-500 text-sm text-white font-semibold transition disabled:opacity-50">
           {{ loggingIn ? '验证中...' : '登录' }}
         </button>
       </form>
@@ -87,123 +83,139 @@
   </div>
 
   <!-- Main Workspace -->
-  <div v-else class="min-h-screen flex flex-col">
+  <div v-else class="min-h-screen flex flex-col bg-canvas">
     <!-- Default password alert -->
-    <div v-if="isDefaultPassword" class="bg-amber-950/90 border-b border-amber-500/40 px-3 sm:px-4 py-1.5 text-xs text-amber-200 flex items-center justify-between gap-2">
+    <div v-if="isDefaultPassword" class="bg-amber-950/80 border-b border-amber-500/40 px-3 sm:px-4 py-1.5 text-xs text-amber-200 flex items-center justify-between gap-2">
       <span class="truncate">请修改默认密码</span>
       <button @click="switchTab('settings')" class="px-2.5 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 text-amber-100 shrink-0">修改</button>
     </div>
 
-    <!-- Top Header: Brand + Desktop Page Tabs + Mode Segmented Switch -->
-    <header class="bg-panel/95 backdrop-blur border-b border-line sticky top-0 z-30">
+    <!-- Top Header: Row 1 (Brand + Nav + Capsule Telemetry + Logout) -->
+    <header class="bg-canvas/95 backdrop-blur border-b border-line sticky top-0 z-30">
       <div class="max-w-[1440px] mx-auto px-3 sm:px-4 h-12 flex items-center justify-between gap-2">
-        <!-- Left: Brand & Desktop Page Switch -->
+        <!-- Left: Brand & Desktop Tabs -->
         <div class="flex items-center gap-3 sm:gap-4 min-w-0">
-          <div class="flex items-center gap-1.5 sm:gap-2 min-w-0">
-            <span class="sm:hidden w-2 h-2 rounded-full shrink-0" :class="wsConnected ? 'bg-emerald-400' : 'bg-rose-500'"></span>
-            <span class="font-bold text-sm text-white tracking-tight truncate">PolyQuant <span class="text-indigo-400">BTC 5m</span></span>
-            <span class="px-1.5 py-0.5 rounded bg-slate-800/90 text-[10px] mono text-slate-400 shrink-0">v29</span>
+          <div class="flex items-center gap-2 min-w-0">
+            <span class="w-2 h-2 rounded-full shrink-0" :class="wsConnected ? 'bg-emerald-400 shadow-[0_0_6px_#10b981]' : 'bg-rose-500'"></span>
+            <span class="font-bold text-[15px] text-white tracking-tight truncate">PolyQuant <span class="text-indigo-400">5m</span></span>
+            <span class="px-1.5 py-0.5 rounded bg-card border border-line2 text-[10px] mono text-slate-300 shrink-0">v30</span>
           </div>
-          <!-- Desktop Tabs (hidden on mobile; mobile uses fixed bottom tab bar) -->
-          <nav class="hidden sm:flex items-center gap-1 bg-sub p-0.5 rounded-lg border border-line">
+          <nav class="hidden sm:flex items-center gap-1 bg-card p-0.5 rounded-lg border border-line">
             <button v-for="t in tabs" :key="t.id" @click="switchTab(t.id)"
                     class="px-3.5 py-1 rounded-md text-xs font-medium whitespace-nowrap transition"
-                    :class="activeTab === t.id ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white'">
+                    :class="activeTab === t.id ? 'bg-[#4f46e5] text-white' : 'text-slate-400 hover:text-slate-100'">
               {{ t.label }}
             </button>
           </nav>
         </div>
 
-        <!-- Right: Run Mode Switch + Circuit Breaker + WS + Logout -->
-        <div class="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
-          <div class="flex items-center bg-sub p-0.5 rounded-lg border border-line text-[11px]">
-            <button @click="setMode('PAPER')" class="px-2 sm:px-2.5 py-1 rounded-md font-medium transition whitespace-nowrap"
-                    :class="state.mode === 'PAPER' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-slate-200'">
-              模拟
+        <!-- Right: Desktop Capsule Hardware Monitor + Mobile Mode Switch + Logout -->
+        <div class="flex items-center gap-2 shrink-0">
+          <!-- DESKTOP Capsule Ring-Gauge Bar (exact PolySniper dark pill look) -->
+          <div class="hidden md:inline-flex items-center gap-2.5 px-3 py-1 rounded-full bg-[#0E1420] border border-[#1E293B] text-[11px] mono">
+            <div class="inline-flex items-center gap-1.5" :title="'CPU 核心数: ' + (state.system.cpu_cores || 1)">
+              <svg class="w-4 h-4 -rotate-90 shrink-0" viewBox="0 0 18 18">
+                <circle cx="9" cy="9" r="6.5" fill="none" stroke="#1E293B" stroke-width="2.2" />
+                <circle cx="9" cy="9" r="6.5" fill="none" :stroke="ringColor(state.system.cpu_percent, 'cpu')" stroke-width="2.2" stroke-linecap="round" :stroke-dasharray="ringDash(state.system.cpu_percent)" />
+              </svg>
+              <strong class="text-white font-semibold">{{ Number(state.system.cpu_percent || 0).toFixed(1) }}%</strong>
+              <span class="text-[10px] text-slate-400">CPU</span>
+            </div>
+            <span class="h-3.5 w-px bg-[#1E293B]"></span>
+            <div class="inline-flex items-center gap-1.5" :title="'内存: ' + state.system.mem_used_mb + '/' + state.system.mem_total_mb + 'M | 进程: ' + state.system.proc_rss_mb + 'M | Swap: ' + state.system.swap_percent + '%'">
+              <svg class="w-4 h-4 -rotate-90 shrink-0" viewBox="0 0 18 18">
+                <circle cx="9" cy="9" r="6.5" fill="none" stroke="#1E293B" stroke-width="2.2" />
+                <circle cx="9" cy="9" r="6.5" fill="none" :stroke="ringColor(state.system.mem_percent, 'mem')" stroke-width="2.2" stroke-linecap="round" :stroke-dasharray="ringDash(state.system.mem_percent)" />
+              </svg>
+              <strong class="text-white font-semibold">{{ Number(state.system.mem_percent || 0).toFixed(0) }}%</strong>
+              <span class="text-[10px] text-slate-400">MEM</span>
+            </div>
+            <span class="h-3.5 w-px bg-[#1E293B]"></span>
+            <div class="inline-flex items-center gap-2">
+              <span class="text-emerald-400 font-medium">↓ {{ fmtSpeed(state.system.net_rx_kbps) }}</span>
+              <span class="text-sky-400 font-medium">↑ {{ fmtSpeed(state.system.net_tx_kbps) }}</span>
+              <span class="px-1.5 py-0.5 rounded bg-[#070B12] border border-[#1E293B] text-[10px] text-slate-200"
+                    :title="'累计下行 ↓' + fmtBytesMB(state.system.net_cum_rx_mb) + ' / 上行 ↑' + fmtBytesMB(state.system.net_cum_tx_mb)">
+                Σ {{ fmtBytesMB((Number(state.system.net_cum_rx_mb) || 0) + (Number(state.system.net_cum_tx_mb) || 0)) }}
+              </span>
+            </div>
+            <span class="h-3.5 w-px bg-[#1E293B]"></span>
+            <button @click="checkClockNow" type="button" class="inline-flex items-center gap-1 text-[10px] text-slate-400 hover:text-white transition cursor-pointer" title="每5分钟自动检测UTC时差（点击立即复测）">
+              <strong :class="Math.abs(state.feeds.geo_check.clock_drift_ms) > 1000 ? 'text-rose-400' : (Math.abs(state.feeds.geo_check.clock_drift_ms) > 500 ? 'text-amber-400' : 'text-emerald-400')">
+                {{ Math.round(state.feeds.geo_check.clock_drift_ms || 0) }}ms
+              </strong>
             </button>
-            <button @click="setMode('PAUSED')" class="px-2 sm:px-2.5 py-1 rounded-md font-medium transition whitespace-nowrap"
-                    :class="state.mode === 'PAUSED' ? 'bg-amber-600 text-white' : 'text-slate-400 hover:text-slate-200'">暂停</button>
-            <button @click="setMode('LIVE')" class="px-2 sm:px-2.5 py-1 rounded-md font-medium transition whitespace-nowrap"
-                    :class="state.mode === 'LIVE' ? 'bg-rose-600 text-white' : 'text-rose-300/80 hover:text-rose-200'">实盘</button>
           </div>
 
-          <button v-if="state.strategy.circuit_breaker_remaining > 0" @click="resetBreaker"
-                  class="hidden sm:inline-flex px-2.5 py-1 rounded-lg text-[11px] font-medium bg-amber-600 hover:bg-amber-500 text-white whitespace-nowrap">
-            解除熔断 {{ state.strategy.circuit_breaker_remaining }}s
-          </button>
+          <!-- Mobile Mode Switch in Top Row -->
+          <div class="flex md:hidden items-center bg-card p-0.5 rounded-lg border border-line text-[11px]">
+            <button @click="setMode('PAPER')" class="px-2 py-1 rounded-md font-medium transition" :class="state.mode === 'PAPER' ? 'bg-emerald-600 text-white' : 'text-slate-400'">模拟</button>
+            <button @click="setMode('PAUSED')" class="px-2 py-1 rounded-md font-medium transition" :class="state.mode === 'PAUSED' ? 'bg-amber-600 text-white' : 'text-slate-400'">暂停</button>
+            <button @click="setMode('LIVE')" class="px-2 py-1 rounded-md font-medium transition" :class="state.mode === 'LIVE' ? 'bg-rose-600 text-white' : 'text-rose-400/80'">实盘</button>
+          </div>
 
-          <span class="hidden md:flex items-center gap-1.5 text-[11px] text-slate-400 mono">
-            <span class="w-2 h-2 rounded-full" :class="wsConnected ? 'bg-emerald-400' : 'bg-rose-500'"></span>
-            {{ wsConnected ? '在线' : '重连' }}
-          </span>
-          <button @click="doLogout" class="text-xs text-slate-400 hover:text-rose-300 px-1.5 py-1 whitespace-nowrap">退出</button>
+          <button @click="doLogout" class="px-2 py-1 rounded-md text-xs text-slate-400 hover:text-rose-300 hover:bg-card border border-transparent hover:border-line transition whitespace-nowrap">退出</button>
         </div>
       </div>
 
-      <!-- Mobile Circuit Breaker Alert Strip -->
+      <!-- Mobile Circuit Breaker Alert -->
       <div v-if="state.strategy.circuit_breaker_remaining > 0"
-           class="sm:hidden bg-amber-950/90 border-t border-amber-500/40 px-3 py-1.5 flex items-center justify-between text-xs text-amber-200">
+           class="md:hidden bg-amber-950/85 border-t border-amber-500/40 px-3 py-1.5 flex items-center justify-between text-xs text-amber-200">
         <span>熔断中 · <strong class="mono">{{ state.strategy.circuit_breaker_remaining }}s</strong></span>
         <button @click="resetBreaker" class="px-2.5 py-0.5 rounded bg-amber-600 text-white font-semibold text-[11px]">解除熔断</button>
       </div>
 
-      <!-- MOBILE Slim Telemetry Summary Strip (< md: single compact line + tap to expand) -->
-      <div class="md:hidden bg-sub/95 border-t border-line/70 px-3 py-1.5">
+      <!-- MOBILE Slim Telemetry Summary Bar (< md) -->
+      <div class="md:hidden bg-panel border-t border-line px-3 py-1.5">
         <div class="flex items-center justify-between gap-2 text-[11px] mono">
-          <button @click="mobileTelemetryOpen = !mobileTelemetryOpen" type="button"
-                  class="inline-flex items-center gap-1.5 text-slate-300 shrink-0 active:opacity-80">
+          <button @click="mobileTelemetryOpen = !mobileTelemetryOpen" type="button" class="inline-flex items-center gap-1.5 text-slate-200 shrink-0">
             <span :class="dotClass(feedHealthSummary.healthy === feedHealthSummary.total, feedHealthSummary.healthy >= 4 && feedHealthSummary.healthy < feedHealthSummary.total)"></span>
             <span class="font-sans">链路</span>
-            <strong :class="feedHealthSummary.healthy === feedHealthSummary.total ? 'text-emerald-400' : 'text-amber-300'">{{ feedHealthSummary.healthy }}/{{ feedHealthSummary.total }}</strong>
+            <strong :class="feedHealthSummary.healthy === feedHealthSummary.total ? 'text-emerald-400' : 'text-amber-400'">{{ feedHealthSummary.healthy }}/{{ feedHealthSummary.total }}</strong>
             <span class="text-[10px] text-slate-500">{{ mobileTelemetryOpen ? '▴' : '▾' }}</span>
           </button>
-
           <div class="flex items-center gap-2.5 overflow-x-auto no-scrollbar">
             <span class="inline-flex items-center gap-1 shrink-0">
               <svg class="w-3.5 h-3.5 -rotate-90" viewBox="0 0 18 18">
-                <circle cx="9" cy="9" r="6.5" fill="none" stroke="#1e293b" stroke-width="2.4" />
+                <circle cx="9" cy="9" r="6.5" fill="none" stroke="#1E293B" stroke-width="2.4" />
                 <circle cx="9" cy="9" r="6.5" fill="none" :stroke="ringColor(state.system.cpu_percent, 'cpu')" stroke-width="2.4" stroke-linecap="round" :stroke-dasharray="ringDash(state.system.cpu_percent)" />
               </svg>
               <strong class="text-white">{{ Number(state.system.cpu_percent || 0).toFixed(0) }}%</strong>
             </span>
             <span class="inline-flex items-center gap-1 shrink-0">
               <svg class="w-3.5 h-3.5 -rotate-90" viewBox="0 0 18 18">
-                <circle cx="9" cy="9" r="6.5" fill="none" stroke="#1e293b" stroke-width="2.4" />
+                <circle cx="9" cy="9" r="6.5" fill="none" stroke="#1E293B" stroke-width="2.4" />
                 <circle cx="9" cy="9" r="6.5" fill="none" :stroke="ringColor(state.system.mem_percent, 'mem')" stroke-width="2.4" stroke-linecap="round" :stroke-dasharray="ringDash(state.system.mem_percent)" />
               </svg>
               <strong class="text-white">{{ Number(state.system.mem_percent || 0).toFixed(0) }}%</strong>
             </span>
-            <button @click="checkClockNow" type="button" class="inline-flex items-center gap-1 shrink-0 text-[10px] text-slate-400">
-              <strong :class="Math.abs(state.feeds.geo_check.clock_drift_ms) > 1000 ? 'text-rose-400' : (Math.abs(state.feeds.geo_check.clock_drift_ms) > 500 ? 'text-amber-300' : 'text-emerald-400')">
+            <button @click="checkClockNow" type="button" class="shrink-0 text-[10px]">
+              <strong :class="Math.abs(state.feeds.geo_check.clock_drift_ms) > 1000 ? 'text-rose-400' : (Math.abs(state.feeds.geo_check.clock_drift_ms) > 500 ? 'text-amber-400' : 'text-emerald-400')">
                 {{ Math.round(state.feeds.geo_check.clock_drift_ms || 0) }}ms
               </strong>
             </button>
           </div>
         </div>
-
-        <!-- Mobile Expanded Telemetry Drawer -->
-        <div v-if="mobileTelemetryOpen" class="mt-2 pt-2 border-t border-line/60 space-y-2 text-[11px]">
-          <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-slate-300">
+        <div v-if="mobileTelemetryOpen" class="mt-2 pt-2 border-t border-line space-y-2 text-[11px]">
+          <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-slate-200">
             <button type="button" @click="inspectFeed('rtds')" class="inline-flex items-center gap-1.5"><span :class="dotClass(state.feeds.rtds && state.feeds.rtds.connected)"></span>预言机</button>
             <button type="button" @click="inspectFeed('polybolt')" class="inline-flex items-center gap-1.5"><span :class="dotClass(state.feeds.polybolt.connected)"></span>API源</button>
-            <button type="button" @click="inspectFeed('clob')" class="inline-flex items-center gap-1.5"><span :class="clobDotClass(state.feeds.clob)"></span>盘口<span class="mono text-[10px] text-slate-500">{{ state.feeds.clob.live_quotes ? (Math.round(state.feeds.clob.book_age_sec || 0) + 's') : '同步' }}</span></button>
-            <button type="button" @click="inspectFeed('gamma')" class="inline-flex items-center gap-1.5"><span :class="dotClass(state.feeds.gamma.connected)"></span>场次<span class="mono text-[10px] text-slate-500">{{ Math.round(state.feeds.gamma.latency_ms || 0) }}ms</span></button>
+            <button type="button" @click="inspectFeed('clob')" class="inline-flex items-center gap-1.5"><span :class="clobDotClass(state.feeds.clob)"></span>盘口<span class="mono text-[10px] text-slate-400">{{ state.feeds.clob.live_quotes ? (Math.round(state.feeds.clob.book_age_sec || 0) + 's') : '同步' }}</span></button>
+            <button type="button" @click="inspectFeed('gamma')" class="inline-flex items-center gap-1.5"><span :class="dotClass(state.feeds.gamma.connected)"></span>场次<span class="mono text-[10px] text-slate-400">{{ Math.round(state.feeds.gamma.latency_ms || 0) }}ms</span></button>
             <button type="button" @click="inspectFeed('binance')" class="inline-flex items-center gap-1.5"><span :class="dotClass(state.feeds.binance.connected)"></span>现货</button>
             <button type="button" @click="inspectFeed('binance_perp')" class="inline-flex items-center gap-1.5"><span :class="dotClass(state.feeds.binance_perp && state.feeds.binance_perp.connected && !state.feeds.binance_perp.perp_stale, state.feeds.binance_perp && state.feeds.binance_perp.connected && state.feeds.binance_perp.perp_stale)"></span>永续</button>
           </div>
-          <div v-if="feedFaults.length" class="space-y-1 pt-1.5 border-t border-line/40 text-[10px]">
-            <div v-for="ff in feedFaults" :key="ff.key" class="flex items-center gap-1.5 text-rose-300/90">
-              <span class="px-1 py-0.5 rounded bg-rose-500/15 text-rose-300 shrink-0">{{ ff.label }}</span>
+          <div v-if="feedFaults.length" class="space-y-1 pt-1.5 border-t border-line text-[10px]">
+            <div v-for="ff in feedFaults" :key="ff.key" class="flex items-center gap-1.5 text-rose-300">
+              <span class="px-1.5 py-0.5 rounded bg-rose-500/15 border border-rose-500/30 shrink-0">{{ ff.label }}</span>
               <span class="truncate">{{ ff.reason }}</span>
             </div>
           </div>
-          <div class="flex flex-wrap items-center justify-between gap-2 pt-1.5 border-t border-line/40 mono text-[10px] text-slate-400">
+          <div class="flex flex-wrap items-center justify-between gap-2 pt-1.5 border-t border-line mono text-[10px] text-slate-400">
             <div class="flex items-center gap-2">
               <span class="text-emerald-400">↓ {{ fmtSpeed(state.system.net_rx_kbps) }}</span>
               <span class="text-sky-400">↑ {{ fmtSpeed(state.system.net_tx_kbps) }}</span>
-              <span class="px-1.5 py-0.5 rounded bg-slate-800/85 border border-slate-700/80 text-slate-300">
-                Σ {{ fmtBytesMB((Number(state.system.net_cum_rx_mb) || 0) + (Number(state.system.net_cum_tx_mb) || 0)) }}
-              </span>
+              <span class="px-1.5 py-0.5 rounded bg-sub border border-line2 text-slate-200">Σ {{ fmtBytesMB((Number(state.system.net_cum_rx_mb) || 0) + (Number(state.system.net_cum_tx_mb) || 0)) }}</span>
             </div>
             <div class="flex items-center gap-2">
               <span>盘 {{ state.system.disk_free_gb }}G</span>
@@ -213,379 +225,324 @@
           </div>
         </div>
       </div>
-
-      <!-- DESKTOP Unified Slim Telemetry & Data-Feed Health Strip (>= md) -->
-      <div class="hidden md:block bg-sub/90 border-t border-line/70">
-        <div class="max-w-[1440px] mx-auto px-4 py-1.5 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-[11px]">
-          <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-slate-400">
-            <span class="text-slate-500 font-medium">链路</span>
-            <button type="button" @click="inspectFeed('rtds')" class="inline-flex items-center gap-1.5 hover:text-slate-200 transition cursor-pointer" :title="feedTooltip('rtds')">
-              <span :class="dotClass(state.feeds.rtds && state.feeds.rtds.connected)"></span>预言机
-            </button>
-            <button type="button" @click="inspectFeed('polybolt')" class="inline-flex items-center gap-1.5 hover:text-slate-200 transition cursor-pointer" :title="feedTooltip('polybolt')">
-              <span :class="dotClass(state.feeds.polybolt.connected)"></span>API源
-            </button>
-            <button type="button" @click="inspectFeed('clob')" class="inline-flex items-center gap-1.5 hover:text-slate-200 transition cursor-pointer" :title="feedTooltip('clob')">
-              <span :class="clobDotClass(state.feeds.clob)"></span>盘口<span class="mono text-[10px] text-slate-500">{{ state.feeds.clob.live_quotes ? (Math.round(state.feeds.clob.book_age_sec || 0) + 's') : '同步' }}</span>
-            </button>
-            <button type="button" @click="inspectFeed('gamma')" class="inline-flex items-center gap-1.5 hover:text-slate-200 transition cursor-pointer" :title="feedTooltip('gamma')">
-              <span :class="dotClass(state.feeds.gamma.connected)"></span>场次<span class="mono text-[10px] text-slate-500">{{ Math.round(state.feeds.gamma.latency_ms || 0) }}ms</span>
-            </button>
-            <button type="button" @click="inspectFeed('binance')" class="inline-flex items-center gap-1.5 hover:text-slate-200 transition cursor-pointer" :title="feedTooltip('binance')">
-              <span :class="dotClass(state.feeds.binance.connected)"></span>现货
-            </button>
-            <button type="button" @click="inspectFeed('binance_perp')" class="inline-flex items-center gap-1.5 hover:text-slate-200 transition cursor-pointer" :title="feedTooltip('binance_perp')">
-              <span :class="dotClass(state.feeds.binance_perp && state.feeds.binance_perp.connected && !state.feeds.binance_perp.perp_stale, state.feeds.binance_perp && state.feeds.binance_perp.connected && state.feeds.binance_perp.perp_stale)"></span>永续
-              <span v-if="state.feeds.binance_perp && !state.feeds.binance_perp.connected && state.feeds.binance_perp.last_error" class="text-[10px] text-rose-400/90 max-w-[110px] truncate">({{ state.feeds.binance_perp.last_error }})</span>
-            </button>
-          </div>
-
-          <!-- Server Resource Telemetry (Capsule Ring-Gauge Bar) -->
-          <div class="flex flex-wrap items-center gap-2 mono">
-            <div class="inline-flex flex-wrap items-center gap-2.5 px-3 py-1 rounded-full bg-[#0b1220] border border-slate-700/75 shadow-inner text-[11px]">
-              <div class="inline-flex items-center gap-1.5" :title="'CPU 核心数: ' + (state.system.cpu_cores || 1)">
-                <svg class="w-4 h-4 -rotate-90 shrink-0" viewBox="0 0 18 18">
-                  <circle cx="9" cy="9" r="6.5" fill="none" stroke="#1e293b" stroke-width="2.2" />
-                  <circle cx="9" cy="9" r="6.5" fill="none" :stroke="ringColor(state.system.cpu_percent, 'cpu')" stroke-width="2.2" stroke-linecap="round" :stroke-dasharray="ringDash(state.system.cpu_percent)" />
-                </svg>
-                <strong class="text-white font-semibold">{{ Number(state.system.cpu_percent || 0).toFixed(1) }}%</strong>
-                <span class="text-[10px] text-slate-400">CPU</span>
-              </div>
-
-              <span class="h-3.5 w-px bg-slate-700/80"></span>
-
-              <div class="inline-flex items-center gap-1.5" :title="'内存: ' + state.system.mem_used_mb + '/' + state.system.mem_total_mb + 'M | 进程占用: ' + state.system.proc_rss_mb + 'M | Swap: ' + state.system.swap_percent + '%'">
-                <svg class="w-4 h-4 -rotate-90 shrink-0" viewBox="0 0 18 18">
-                  <circle cx="9" cy="9" r="6.5" fill="none" stroke="#1e293b" stroke-width="2.2" />
-                  <circle cx="9" cy="9" r="6.5" fill="none" :stroke="ringColor(state.system.mem_percent, 'mem')" stroke-width="2.2" stroke-linecap="round" :stroke-dasharray="ringDash(state.system.mem_percent)" />
-                </svg>
-                <strong class="text-white font-semibold">{{ Number(state.system.mem_percent || 0).toFixed(0) }}%</strong>
-                <span class="text-[10px] text-slate-400">MEM</span>
-              </div>
-
-              <span class="h-3.5 w-px bg-slate-700/80"></span>
-
-              <div class="inline-flex items-center gap-2">
-                <span class="text-emerald-400 font-medium">↓ {{ fmtSpeed(state.system.net_rx_kbps) }}</span>
-                <span class="text-sky-400 font-medium">↑ {{ fmtSpeed(state.system.net_tx_kbps) }}</span>
-                <span class="px-1.5 py-0.5 rounded-md bg-slate-800/85 border border-slate-700/80 text-[10px] text-slate-300"
-                      :title="'累计下行 ↓' + fmtBytesMB(state.system.net_cum_rx_mb) + ' / 累计上行 ↑' + fmtBytesMB(state.system.net_cum_tx_mb)">
-                  Σ {{ fmtBytesMB((Number(state.system.net_cum_rx_mb) || 0) + (Number(state.system.net_cum_tx_mb) || 0)) }}
-                </span>
-              </div>
-
-              <span class="h-3.5 w-px bg-slate-700/80"></span>
-
-              <div class="inline-flex items-center gap-2 text-[10px] text-slate-400">
-                <span :title="'磁盘余量: ' + state.system.disk_free_gb + 'GB'">盘 <strong class="text-slate-200">{{ state.system.disk_free_gb }}G</strong></span>
-                <button @click="checkClockNow" type="button"
-                        class="inline-flex items-center gap-1 hover:text-white transition cursor-pointer"
-                        title="每5分钟自动检测币安UTC时差（点击立即复测）">
-                  <span>时钟</span>
-                  <strong :class="Math.abs(state.feeds.geo_check.clock_drift_ms) > 1000 ? 'text-rose-400' : (Math.abs(state.feeds.geo_check.clock_drift_ms) > 500 ? 'text-amber-300' : 'text-emerald-400')">
-                    {{ state.feeds.geo_check.clock_drift_ms }}ms
-                  </strong>
-                </button>
-                <span>
-                  <strong :class="state.feeds.geo_check.blocked ? 'text-rose-400' : 'text-emerald-400'">{{ state.feeds.geo_check.country }}</strong>
-                  · {{ fmtUptime(state.system.uptime_sec) }}
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
     </header>
 
-    <main class="max-w-[1440px] w-full mx-auto p-3 sm:p-4 pb-20 sm:pb-4 space-y-3 sm:space-y-4 flex-1">
-      <!-- ==================== PAGE 1: 交易与雷达 ==================== -->
-      <section v-show="activeTab === 'home'" class="space-y-3 sm:space-y-4">
+    <main class="max-w-[1440px] w-full mx-auto px-3 sm:px-4 py-3 sm:py-3.5 pb-20 sm:pb-5 space-y-3 sm:space-y-3.5 flex-1">
+      <!-- ==================== DESKTOP ROW 2: Slim Terminal Status Strip (PolySniper Style) ==================== -->
+      <div class="hidden md:flex items-center justify-between gap-3 px-3.5 py-2 term-card text-xs">
+        <!-- Left: Round Window + Source Pill + Unit -->
+        <div class="flex items-center gap-2 min-w-0">
+          <span class="font-bold text-white shrink-0">BTC 5m</span>
+          <span v-if="state.round.window_ts" class="px-2 py-0.5 rounded bg-amber-500/15 border border-amber-500/35 text-amber-300 mono text-[11px] font-semibold shrink-0" :title="state.round.slug">
+            {{ fmtRoundWindow(state.round.window_ts) }}
+          </span>
+          <span class="px-2 py-0.5 rounded text-[10px] font-medium shrink-0"
+                :class="(state.round.ptb_source.includes('官方') || state.round.ptb_source.includes('精确')) ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/35' : 'bg-amber-500/15 text-amber-300 border border-amber-500/35'">
+            {{ state.round.ptb_source }}
+          </span>
+          <span class="px-2 py-0.5 rounded bg-rose-500/15 border border-rose-500/35 text-rose-300 mono text-[11px] shrink-0">${{ riskForm.unit_size_usdc }} 单元</span>
+        </div>
 
-        <!-- ZONE 1: Unified Round Overview & Live Pricing Matrix (Hero Card) -->
-        <div class="bg-card border border-line rounded-xl overflow-hidden shadow-lg">
-          <div class="grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-line">
-            <!-- Left 7/12: Official Anchor Prices, Countdown & Previous Settlement -->
-            <div class="lg:col-span-7 p-3 sm:p-4 flex flex-col justify-between gap-2.5 sm:gap-3">
-              <div class="flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5 text-xs">
-                <div class="flex flex-wrap items-center gap-1.5 sm:gap-2 min-w-0">
-                  <span class="font-semibold text-white shrink-0">场次</span>
-                  <span class="mono text-[11px] text-slate-400 truncate max-w-[145px] sm:max-w-none">{{ state.round.slug || '--' }}</span>
-                  <span class="px-1.5 py-0.5 rounded text-[10px] shrink-0"
-                        :class="(state.round.ptb_source.includes('官方') || state.round.ptb_source.includes('精确')) ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30' : 'bg-amber-500/15 text-amber-300 border border-amber-500/30'">
-                    {{ state.round.ptb_source }}
+        <!-- Center: 6 Feed Health Dots -->
+        <div class="flex items-center gap-3 text-[11px] text-slate-300">
+          <button type="button" @click="inspectFeed('rtds')" class="inline-flex items-center gap-1.5 hover:text-white transition cursor-pointer" :title="feedTooltip('rtds')">
+            <span :class="dotClass(state.feeds.rtds && state.feeds.rtds.connected)"></span>预言机
+          </button>
+          <button type="button" @click="inspectFeed('polybolt')" class="inline-flex items-center gap-1.5 hover:text-white transition cursor-pointer" :title="feedTooltip('polybolt')">
+            <span :class="dotClass(state.feeds.polybolt.connected)"></span>API源
+          </button>
+          <button type="button" @click="inspectFeed('clob')" class="inline-flex items-center gap-1.5 hover:text-white transition cursor-pointer" :title="feedTooltip('clob')">
+            <span :class="clobDotClass(state.feeds.clob)"></span>盘口<span class="mono text-[10px] text-slate-400">{{ state.feeds.clob.live_quotes ? (Math.round(state.feeds.clob.book_age_sec || 0) + 's') : '同步' }}</span>
+          </button>
+          <button type="button" @click="inspectFeed('gamma')" class="inline-flex items-center gap-1.5 hover:text-white transition cursor-pointer" :title="feedTooltip('gamma')">
+            <span :class="dotClass(state.feeds.gamma.connected)"></span>场次<span class="mono text-[10px] text-slate-400">{{ Math.round(state.feeds.gamma.latency_ms || 0) }}ms</span>
+          </button>
+          <button type="button" @click="inspectFeed('binance')" class="inline-flex items-center gap-1.5 hover:text-white transition cursor-pointer" :title="feedTooltip('binance')">
+            <span :class="dotClass(state.feeds.binance.connected)"></span>现货
+          </button>
+          <button type="button" @click="inspectFeed('binance_perp')" class="inline-flex items-center gap-1.5 hover:text-white transition cursor-pointer" :title="feedTooltip('binance_perp')">
+            <span :class="dotClass(state.feeds.binance_perp && state.feeds.binance_perp.connected && !state.feeds.binance_perp.perp_stale, state.feeds.binance_perp && state.feeds.binance_perp.connected && state.feeds.binance_perp.perp_stale)"></span>永续
+            <span v-if="state.feeds.binance_perp && !state.feeds.binance_perp.connected && state.feeds.binance_perp.last_error" class="text-[10px] text-rose-400 max-w-[100px] truncate">({{ state.feeds.binance_perp.last_error }})</span>
+          </button>
+        </div>
+
+        <!-- Right: Balance + Mode Switch + Breaker + Geo/Uptime -->
+        <div class="flex items-center gap-2.5 shrink-0">
+          <div class="flex items-center gap-2 text-[11px] mono text-slate-400">
+            <span>余额 <strong class="text-emerald-400">${{ Number(state.paper_balance).toFixed(2) }}</strong></span>
+            <span class="text-slate-700">|</span>
+            <span :title="'盘余 ' + state.system.disk_free_gb + 'G'">
+              <strong :class="state.feeds.geo_check.blocked ? 'text-rose-400' : 'text-emerald-400'">{{ state.feeds.geo_check.country }}</strong>
+              · {{ fmtUptime(state.system.uptime_sec) }}
+            </span>
+          </div>
+
+          <div class="flex items-center bg-sub p-0.5 rounded-lg border border-line2 text-[11px]">
+            <button @click="setMode('PAPER')" class="px-2.5 py-0.5 rounded-md font-medium transition" :class="state.mode === 'PAPER' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-slate-100'">模拟</button>
+            <button @click="setMode('PAUSED')" class="px-2.5 py-0.5 rounded-md font-medium transition" :class="state.mode === 'PAUSED' ? 'bg-amber-600 text-white' : 'text-slate-400 hover:text-slate-100'">暂停</button>
+            <button @click="setMode('LIVE')" class="px-2.5 py-0.5 rounded-md font-medium transition" :class="state.mode === 'LIVE' ? 'bg-rose-600 text-white' : 'text-rose-400/80 hover:text-rose-200'">实盘</button>
+          </div>
+
+          <button v-if="state.strategy.circuit_breaker_remaining > 0" @click="resetBreaker"
+                  class="px-2.5 py-1 rounded-md text-[11px] font-semibold bg-amber-600 hover:bg-amber-500 text-white">
+            解除熔断 {{ state.strategy.circuit_breaker_remaining }}s
+          </button>
+        </div>
+      </div>
+
+      <!-- ==================== PAGE 1: 交易 ==================== -->
+      <section v-show="activeTab === 'home'" class="space-y-3 sm:space-y-3.5">
+
+        <!-- ZONE 1: Dual Hero Charts (Left: BTC Price & Strike | Right: Polymarket Orderbook / Equity) -->
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-3 sm:gap-3.5">
+
+          <!-- Left 6/12: BTC Price走势 + Strike + Countdown -->
+          <div class="lg:col-span-6 term-card p-3.5 sm:p-4 flex flex-col gap-2.5">
+            <!-- Header Row: Title + Live Spot/TWAP Big Price -->
+            <div class="flex items-start justify-between gap-2">
+              <div class="min-w-0">
+                <div class="flex items-center gap-2">
+                  <h2 class="text-sm font-bold text-white">BTC 价格走势</h2>
+                  <span class="px-1.5 py-0.5 rounded bg-sub border border-line2 text-[10px] text-sky-300 font-medium">{{ fmtRegime(state.strategy.features.regime) }}</span>
+                </div>
+                <div class="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-[11px] mono">
+                  <span class="text-slate-400">目标价 <strong class="text-amber-400">${{ state.round.price_to_beat }}</strong></span>
+                  <span class="text-slate-400">现货 <strong class="text-sky-300">${{ state.round.binance_spot || '--' }}</strong></span>
+                  <span class="text-slate-400">基差 <strong class="text-slate-200">{{ state.round.basis_usd >= 0 ? '+' : '' }}{{ state.round.basis_usd }}</strong></span>
+                </div>
+              </div>
+              <div class="text-right shrink-0">
+                <div class="flex items-center justify-end gap-1.5">
+                  <span class="text-xl sm:text-2xl font-bold mono text-white tracking-tight">${{ state.round.twap60 }}</span>
+                  <span v-if="state.round.twap_diff_usd !== null"
+                        class="px-1.5 py-0.5 rounded text-[11px] mono font-bold"
+                        :class="Number(state.round.twap_diff_usd) >= 0 ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/35' : 'bg-rose-500/15 text-rose-400 border border-rose-500/35'">
+                    {{ Number(state.round.twap_diff_usd) >= 0 ? '+' : '' }}{{ state.round.twap_diff_usd }}
                   </span>
                 </div>
-                <div class="flex items-center gap-1.5 sm:gap-2 text-[11px] mono">
-                  <span class="text-slate-500 font-sans">上场</span>
+                <div class="text-[10px] mono text-slate-400 mt-0.5 flex items-center justify-end gap-1.5">
+                  <span>上场</span>
                   <template v-if="state.round.last_settled">
-                    <span v-if="state.round.last_settled.window_ts" class="text-slate-400" :title="'btc-updown-5m-' + state.round.last_settled.window_ts">
-                      {{ fmtRoundWindow(state.round.last_settled.window_ts) }}
-                    </span>
-                    <span class="px-1.5 py-0.5 rounded font-bold"
-                          :class="state.round.last_settled.official_outcome === 'UP' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300'">
-                      {{ state.round.last_settled.official_outcome }}
-                    </span>
+                    <span v-if="state.round.last_settled.window_ts">{{ fmtRoundWindow(state.round.last_settled.window_ts) }}</span>
+                    <span class="font-bold" :class="state.round.last_settled.official_outcome === 'UP' ? 'text-emerald-400' : 'text-rose-400'">{{ state.round.last_settled.official_outcome }}</span>
                     <span class="text-slate-300">${{ state.round.last_settled.settlement_price }}</span>
                   </template>
-                  <span v-else class="text-slate-500">--</span>
+                  <span v-else>--</span>
                 </div>
-              </div>
-
-              <!-- 3 Core Anchor Prices -->
-              <div class="grid grid-cols-3 gap-2 sm:gap-3 bg-sub rounded-lg p-2.5 sm:p-3 border border-line/60">
-                <div class="min-w-0">
-                  <div class="text-[10px] sm:text-[11px] text-slate-400 truncate">目标价</div>
-                  <div class="text-[15px] sm:text-xl font-bold mono kpi-val mt-0.5 truncate">${{ state.round.price_to_beat }}</div>
-                </div>
-                <div class="min-w-0">
-                  <div class="text-[10px] sm:text-[11px] text-slate-400 truncate">60s均价</div>
-                  <div class="text-[15px] sm:text-xl font-bold mono mt-0.5 truncate" :class="Number(state.round.twap_diff_usd || 0) >= 0 ? 'kpi-pos' : 'kpi-neg'">
-                    ${{ state.round.twap60 }}
-                  </div>
-                  <div v-if="state.round.twap_diff_usd !== null" class="text-[10px] sm:text-[11px] mono truncate" :class="Number(state.round.twap_diff_usd) >= 0 ? 'kpi-pos' : 'kpi-neg'">
-                    {{ Number(state.round.twap_diff_usd) >= 0 ? '+' : '' }}{{ state.round.twap_diff_usd }}
-                  </div>
-                </div>
-                <div class="min-w-0">
-                  <div class="text-[10px] sm:text-[11px] text-slate-400 truncate">现货</div>
-                  <div class="text-[15px] sm:text-xl font-bold mono kpi-val mt-0.5 truncate">${{ state.round.binance_spot || '--' }}</div>
-                  <div class="text-[10px] sm:text-[11px] mono kpi-muted truncate">基差 {{ state.round.basis_usd >= 0 ? '+' : '' }}{{ state.round.basis_usd }}</div>
-                </div>
-              </div>
-
-              <!-- Round Progress Bar -->
-              <div class="flex items-center gap-2.5 sm:gap-3">
-                <span class="text-[11px] text-slate-400 whitespace-nowrap">倒计时</span>
-                <div class="flex-1 bg-slate-800 h-2 rounded-full overflow-hidden">
-                  <div class="h-full transition-all duration-500"
-                       :class="state.round.remaining_sec <= 60 ? 'bg-amber-400' : 'bg-indigo-500'"
-                       :style="{width: (state.round.elapsed_sec / 3) + '%'}"></div>
-                </div>
-                <span class="mono text-xs font-bold whitespace-nowrap" :class="state.round.remaining_sec <= 60 ? 'text-amber-300' : 'text-slate-200'">
-                  {{ state.round.remaining_sec }}s <span class="text-slate-500 font-normal">/ 300s</span>
-                </span>
               </div>
             </div>
 
-            <!-- Right 5/12: UP / DOWN Orderbook vs Model Pricing Matrix + Execution Status -->
-            <div class="lg:col-span-5 p-3 sm:p-4 flex flex-col justify-between gap-2.5 sm:gap-3 bg-sub/30">
-              <div class="flex items-center justify-between text-xs gap-2">
-                <span class="font-semibold text-white">盘口定价</span>
-                <span class="px-2 py-0.5 rounded bg-indigo-500/15 border border-indigo-500/30 text-[11px] text-indigo-300 font-medium truncate max-w-[60%]">
+            <!-- Countdown Progress Bar -->
+            <div class="flex items-center gap-2.5 text-[11px]">
+              <span class="text-slate-400 shrink-0">倒计时</span>
+              <div class="flex-1 bg-[#182234] h-1.5 rounded-full overflow-hidden">
+                <div class="h-full transition-all duration-500"
+                     :class="state.round.remaining_sec <= 60 ? 'bg-amber-400' : 'bg-emerald-500'"
+                     :style="{width: (state.round.elapsed_sec / 3) + '%'}"></div>
+              </div>
+              <span class="mono font-bold shrink-0" :class="state.round.remaining_sec <= 60 ? 'text-amber-400' : 'text-white'">
+                {{ state.round.remaining_sec }}s <span class="text-slate-400 font-normal">/ 300s</span>
+              </span>
+            </div>
+
+            <!-- Live BTC Price + 60s TWAP + Strike + Momentum Chart -->
+            <div class="chart-well p-1.5"><div id="liveChart" class="w-full h-56 sm:h-64"></div></div>
+          </div>
+
+          <!-- Right 6/12: Polymarket 盘口定价 & Dual-Mode Chart (盘口双线 / 收益曲线) -->
+          <div class="lg:col-span-6 term-card p-3.5 sm:p-4 flex flex-col gap-2.5">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div class="flex items-center gap-2">
+                <h2 class="text-sm font-bold text-white">Polymarket 盘口与收益</h2>
+                <span class="px-2 py-0.5 rounded bg-emerald-500/12 border border-emerald-500/35 text-[11px] text-emerald-300 font-medium truncate max-w-[160px]">
                   {{ state.strategy.round_position || '本场空仓' }}
                 </span>
               </div>
-
-              <!-- Compact 2-row UP/DOWN Comparison Table -->
-              <div class="bg-sub/80 rounded-lg border border-line/70 overflow-hidden">
-                <table class="w-full text-xs mono">
-                  <thead class="text-[10px] text-slate-400 border-b border-line/70 font-sans">
-                    <tr>
-                      <th class="py-1.5 px-2.5 sm:px-3 text-left whitespace-nowrap">方向</th>
-                      <th class="py-1.5 px-1.5 sm:px-2 text-right whitespace-nowrap">买一 / 卖一</th>
-                      <th class="py-1.5 px-1.5 sm:px-2 text-right whitespace-nowrap">模型 (理论)</th>
-                      <th class="py-1.5 px-2.5 sm:px-3 text-right whitespace-nowrap">优势</th>
-                    </tr>
-                  </thead>
-                  <tbody class="divide-y divide-line/50">
-                    <tr>
-                      <td class="py-2 px-2.5 sm:px-3 font-bold kpi-pos whitespace-nowrap">UP</td>
-                      <td class="py-2 px-1.5 sm:px-2 text-right kpi-val whitespace-nowrap">{{ fmtCents(state.orderbook.UP.best_bid) }} / {{ fmtCents(state.orderbook.UP.best_ask) }}</td>
-                      <td class="py-2 px-1.5 sm:px-2 text-right whitespace-nowrap">
-                        <span class="kpi-pos font-semibold">{{ (state.strategy.pricing.model_up_prob*100).toFixed(1) }}%</span>
-                        <span class="text-[10px] kpi-muted ml-0.5 sm:ml-1">({{ ((state.strategy.features.bs_up_prob ?? 0.5)*100).toFixed(0) }}%)</span>
-                      </td>
-                      <td class="py-2 px-2.5 sm:px-3 text-right font-semibold whitespace-nowrap" :class="state.strategy.pricing.up_edge >= 0.04 ? 'kpi-pos' : 'kpi-muted'">
-                        {{ state.strategy.pricing.up_edge >= 0 ? '+' : '' }}{{ (state.strategy.pricing.up_edge*100).toFixed(1) }}%
-                      </td>
-                    </tr>
-                    <tr>
-                      <td class="py-2 px-2.5 sm:px-3 font-bold kpi-neg whitespace-nowrap">DOWN</td>
-                      <td class="py-2 px-1.5 sm:px-2 text-right kpi-val whitespace-nowrap">{{ fmtCents(state.orderbook.DOWN.best_bid) }} / {{ fmtCents(state.orderbook.DOWN.best_ask) }}</td>
-                      <td class="py-2 px-1.5 sm:px-2 text-right whitespace-nowrap">
-                        <span class="kpi-neg font-semibold">{{ (state.strategy.pricing.model_down_prob*100).toFixed(1) }}%</span>
-                        <span class="text-[10px] kpi-muted ml-0.5 sm:ml-1">({{ ((1 - (state.strategy.features.bs_up_prob ?? 0.5))*100).toFixed(0) }}%)</span>
-                      </td>
-                      <td class="py-2 px-2.5 sm:px-3 text-right font-semibold whitespace-nowrap" :class="state.strategy.pricing.down_edge >= 0.04 ? 'kpi-neg' : 'kpi-muted'">
-                        {{ state.strategy.pricing.down_edge >= 0 ? '+' : '' }}{{ (state.strategy.pricing.down_edge*100).toFixed(1) }}%
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-
-              <!-- Live Execution Decision Strip -->
-              <div class="bg-slate-900/70 rounded-lg px-2.5 py-2 sm:py-1.5 border border-line/60 space-y-1.5 sm:space-y-1">
-                <div class="flex items-start sm:items-center justify-between gap-2 text-[11px]">
-                  <div class="flex items-start sm:items-center gap-1.5 flex-1 min-w-0">
-                    <span class="text-slate-400 shrink-0">决策</span>
-                    <span v-if="state.strategy.pricing.last_decision_ts" class="mono text-[10px] text-slate-500 shrink-0 mt-0.5 sm:mt-0">{{ fmtTime(state.strategy.pricing.last_decision_ts) }}</span>
-                    <span class="text-slate-200 sm:truncate flex-1 leading-snug" :title="state.strategy.pricing.last_decision || ''">{{ state.strategy.pricing.last_decision || '监听中' }}</span>
-                  </div>
-                  <span class="mono text-[10px] text-slate-500 shrink-0 mt-0.5 sm:mt-0">信号:{{ state.strategy.pricing.signal === 'NONE' ? '无' : state.strategy.pricing.signal }}</span>
+              <div class="flex items-center gap-1.5">
+                <div class="flex bg-sub p-0.5 rounded-lg border border-line2 text-[11px]">
+                  <button type="button" @click="setRightChartMode('book')"
+                          class="px-2 py-0.5 rounded-md font-medium transition"
+                          :class="rightChartMode === 'book' ? 'bg-[#1E293B] text-white' : 'text-slate-400 hover:text-slate-200'">盘口走势</button>
+                  <button type="button" @click="setRightChartMode('equity')"
+                          class="px-2 py-0.5 rounded-md font-medium transition"
+                          :class="rightChartMode === 'equity' ? 'bg-[#1E293B] text-white' : 'text-slate-400 hover:text-slate-200'">收益曲线</button>
                 </div>
-                <div v-if="state.strategy.pricing.round_block_count > 0 && state.strategy.pricing.last_block_reason"
-                     class="pt-1 border-t border-line/40 space-y-1 text-[10px] text-slate-400">
-                  <div class="flex items-start sm:items-center justify-between gap-2" :title="fmtBlockSummary(state.strategy.pricing.round_block_reasons)">
-                    <button type="button" @click="showBlockDetail = !showBlockDetail"
-                            class="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 shrink-0 mono cursor-pointer">
-                      拦截 {{ state.strategy.pricing.round_block_count }}
-                    </button>
-                    <span class="sm:truncate flex-1 text-slate-400 leading-snug" :title="state.strategy.pricing.last_block_reason">
-                      最近({{ fmtTime(state.strategy.pricing.last_block_ts) }}): {{ state.strategy.pricing.last_block_reason }}
-                    </span>
-                  </div>
-                  <div v-if="showBlockDetail && fmtBlockSummary(state.strategy.pricing.round_block_reasons)" class="text-[10px] text-amber-200/80 pl-1">
-                    {{ fmtBlockSummary(state.strategy.pricing.round_block_reasons) }}
-                  </div>
-                </div>
+                <button @click="loadTradingData(false)" class="px-2 py-1 rounded-md bg-sub hover:bg-slate-800 border border-line2 text-[11px] text-slate-200">刷新</button>
               </div>
+            </div>
+
+            <!-- UP & DOWN Pill Strips (PolySniper signature green/rose pill layout) -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mono text-xs">
+              <div class="px-3 py-2 rounded-lg bg-[#071917] border border-emerald-500/30 flex items-center justify-between gap-2">
+                <div class="flex items-center gap-1.5 min-w-0">
+                  <span class="font-bold text-emerald-400">UP</span>
+                  <span class="text-white font-semibold">{{ fmtCents(state.orderbook.UP.best_bid) }}/{{ fmtCents(state.orderbook.UP.best_ask) }}</span>
+                  <span class="text-[11px] text-slate-400">模{{ (state.strategy.pricing.model_up_prob*100).toFixed(1) }}%</span>
+                </div>
+                <span class="px-1.5 py-0.5 rounded text-[11px] font-bold shrink-0"
+                      :class="state.strategy.pricing.up_edge >= 0.04 ? 'bg-emerald-500/20 text-emerald-300' : 'bg-slate-800/80 text-slate-300'">
+                  {{ state.strategy.pricing.up_edge >= 0 ? '+' : '' }}{{ (state.strategy.pricing.up_edge*100).toFixed(1) }}%
+                </span>
+              </div>
+              <div class="px-3 py-2 rounded-lg bg-[#1c0b13] border border-rose-500/35 flex items-center justify-between gap-2">
+                <div class="flex items-center gap-1.5 min-w-0">
+                  <span class="font-bold text-rose-400">DOWN</span>
+                  <span class="text-white font-semibold">{{ fmtCents(state.orderbook.DOWN.best_bid) }}/{{ fmtCents(state.orderbook.DOWN.best_ask) }}</span>
+                  <span class="text-[11px] text-slate-400">模{{ (state.strategy.pricing.model_down_prob*100).toFixed(1) }}%</span>
+                </div>
+                <span class="px-1.5 py-0.5 rounded text-[11px] font-bold shrink-0"
+                      :class="state.strategy.pricing.down_edge >= 0.04 ? 'bg-rose-500/20 text-rose-300' : 'bg-slate-800/80 text-slate-300'">
+                  {{ state.strategy.pricing.down_edge >= 0 ? '+' : '' }}{{ (state.strategy.pricing.down_edge*100).toFixed(1) }}%
+                </span>
+              </div>
+            </div>
+
+            <!-- Right Dual-Mode Chart Container -->
+            <div class="chart-well p-1.5 relative w-full h-56 sm:h-64">
+              <div v-show="rightChartMode === 'book'" id="bookChart" class="w-full h-full"></div>
+              <div v-show="rightChartMode === 'equity'" id="equityChart" class="w-full h-full"></div>
             </div>
           </div>
         </div>
 
-        <!-- ZONE 2: Dual Main Panels — Left: Market & Strategy Signals (7/12) | Right: Account PnL & Equity Curve (5/12) -->
-        <div class="grid grid-cols-1 lg:grid-cols-12 gap-3 sm:gap-4">
-          <!-- Left Main Card: Strategy Signals + Live Price Chart -->
-          <div class="lg:col-span-7 bg-card border border-line rounded-xl p-3 sm:p-4 flex flex-col gap-3">
-            <div class="flex flex-wrap items-center justify-between gap-2">
-              <div class="flex items-center gap-2">
-                <h2 class="text-sm font-semibold text-white">走势与信号</h2>
-                <span class="px-2 py-0.5 rounded bg-slate-800 text-[11px] text-indigo-300 font-medium">{{ fmtRegime(state.strategy.features.regime) }}</span>
-              </div>
-              <div class="text-[11px] mono text-slate-400">
-                冷却 {{ state.strategy.cooldown_remaining }}s · 连亏 {{ state.strategy.consecutive_losses }}
-              </div>
+        <!-- ZONE 2: Strategy Signal Radar + 4 Recessed High-Contrast Metric Boxes (PolySniper Mid Section) -->
+        <div class="term-card p-3.5 sm:p-4 space-y-3">
+          <!-- Decision & Block Header Bar -->
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div class="flex items-start sm:items-center gap-2 min-w-0 flex-1">
+              <span class="px-2 py-0.5 rounded text-[11px] font-bold shrink-0"
+                    :class="state.strategy.pricing.signal === 'UP' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' : (state.strategy.pricing.signal === 'DOWN' ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40' : 'bg-slate-800 text-slate-300 border border-slate-700')">
+                信号: {{ state.strategy.pricing.signal === 'NONE' ? '无' : state.strategy.pricing.signal }}
+              </span>
+              <span v-if="state.strategy.pricing.last_decision_ts" class="mono text-[11px] text-slate-400 shrink-0">{{ fmtTime(state.strategy.pricing.last_decision_ts) }}</span>
+              <span class="text-xs sm:text-sm font-medium text-white leading-snug sm:truncate" :title="state.strategy.pricing.last_decision || ''">
+                {{ state.strategy.pricing.last_decision || '监听中' }}
+              </span>
             </div>
 
-            <!-- Consolidated 4-Metric Strategy Strip -->
-            <div class="grid grid-cols-2 sm:grid-cols-4 gap-px bg-line/60 rounded-lg border border-line/70 overflow-hidden">
-              <div class="p-2.5 bg-sub">
-                <div class="flex items-center justify-between text-[10px] text-slate-400 gap-1">
-                  <span class="truncate">净动量</span>
-                  <span class="mono shrink-0" :class="(state.strategy.features.energy_accum_score || 0) >= 0 ? 'kpi-pos' : 'kpi-neg'" title="第11维自学习特征：持续能量积累得分">
-                    蓄{{ (state.strategy.features.energy_accum_score || 0) >= 0 ? '+' : '' }}{{ Number(state.strategy.features.energy_accum_score || 0).toFixed(2) }}
-                  </span>
-                </div>
-                <div class="text-base font-bold mono mt-0.5" :class="state.strategy.features.net_power_bps >= 0 ? 'kpi-pos' : 'kpi-neg'">
-                  {{ state.strategy.features.net_power_bps >= 0 ? '+' : '' }}{{ state.strategy.features.net_power_bps }}
-                </div>
-                <div class="text-[10px] mono kpi-muted truncate">多{{ state.strategy.features.bull_power_bps }} / 空{{ state.strategy.features.bear_power_bps }}</div>
-              </div>
-              <div class="p-2.5 bg-sub">
-                <div class="flex items-center justify-between text-[10px] text-slate-400 gap-1">
-                  <span class="truncate">永续流</span>
-                  <span class="mono kpi-muted shrink-0" title="近10分钟滚动自适应3秒净成交门槛">门${{ Math.round(((state.feeds.binance_perp && state.feeds.binance_perp.adaptive_cvd_3s_min_usd) || 65000)/1000) }}k</span>
-                </div>
-                <div class="text-base font-bold mono mt-0.5" :class="(state.strategy.features.orderflow_score || 0) >= 0 ? 'kpi-pos' : 'kpi-neg'">
-                  {{ (state.strategy.features.orderflow_score || 0) >= 0 ? '+' : '' }}{{ state.strategy.features.orderflow_score ?? 0 }}
-                </div>
-                <div class="text-[10px] mono kpi-muted truncate">
-                  CVD {{ (((state.feeds.binance_perp && state.feeds.binance_perp.cvd_3s_imbalance) || 0)*100).toFixed(0) }}% · 量{{ Number((state.feeds.binance_perp && state.feeds.binance_perp.vol_3s_rel) || 0).toFixed(1) }}x
-                </div>
-              </div>
-              <div class="p-2.5 bg-sub">
-                <div class="text-[10px] text-slate-400 truncate">价差 Z</div>
-                <div class="text-base font-bold mono mt-0.5" :class="(state.strategy.features.moneyness_z || 0) >= 0 ? 'kpi-pos' : 'kpi-neg'">
-                  {{ (state.strategy.features.moneyness_z || 0) >= 0 ? '+' : '' }}{{ state.strategy.features.moneyness_z ?? 0 }}σ
-                </div>
-                <div class="text-[10px] mono kpi-muted truncate">余波 ±{{ state.strategy.features.sigma_rem_bps ?? '--' }} · 敏{{ ((state.strategy.features.delta_10bps || 0)*100).toFixed(0) }}¢</div>
-              </div>
-              <div class="p-2.5 bg-sub">
-                <div class="flex items-center justify-between text-[10px] text-slate-400 gap-1">
-                  <span class="truncate">IV / RV</span>
-                  <span class="px-1 rounded text-[9px] shrink-0" :class="ivStateBadge(state.strategy.features.iv_state)">{{ fmtIvState(state.strategy.features.iv_state) }}</span>
-                </div>
-                <div class="text-base font-bold mono mt-0.5" :class="ivRatioColor(state.strategy.features.iv_state)">
-                  {{ Number(state.strategy.features.iv_rv_ratio || 1).toFixed(2) }}x
-                </div>
-                <div class="text-[10px] mono kpi-muted truncate">IV {{ state.strategy.features.iv_1s_bps ?? '--' }} / RV {{ state.strategy.features.sigma_1s_bps ?? '--' }}</div>
-              </div>
+            <div class="flex flex-wrap items-center gap-2 text-[11px] mono shrink-0">
+              <button v-if="state.strategy.pricing.round_block_count > 0 && state.strategy.pricing.last_block_reason"
+                      type="button" @click="showBlockDetail = !showBlockDetail"
+                      class="px-2 py-0.5 rounded bg-amber-500/15 border border-amber-500/35 text-amber-300 hover:bg-amber-500/25 transition cursor-pointer"
+                      :title="fmtBlockSummary(state.strategy.pricing.round_block_reasons)">
+                拦截 {{ state.strategy.pricing.round_block_count }} ▾
+              </button>
+              <span class="text-slate-400">冷却 <strong class="text-slate-200">{{ state.strategy.cooldown_remaining }}s</strong></span>
+              <span class="text-slate-400">连亏 <strong :class="state.strategy.consecutive_losses > 0 ? 'text-rose-400' : 'text-slate-200'">{{ state.strategy.consecutive_losses }}</strong></span>
             </div>
-
-            <div id="liveChart" class="w-full h-56 sm:h-64"></div>
           </div>
 
-          <!-- Right Main Card: Performance Summary + Equity Curve -->
-          <div class="lg:col-span-5 bg-card border border-line rounded-xl p-3 sm:p-4 flex flex-col gap-3">
-            <div class="flex items-center justify-between gap-2">
-              <h2 class="text-sm font-semibold text-white">收益绩效</h2>
-              <div class="flex items-center gap-1.5 text-[11px]">
-                <button @click="loadTradingData(false)" class="px-2 py-1 sm:py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300">刷新</button>
-                <button @click="resetPaper" class="px-2 py-1 sm:py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300">重置</button>
-                <a :href="'/api/orders/export?mode=' + orderFilter" target="_blank"
-                   class="px-2 py-1 sm:py-0.5 rounded bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/40 text-indigo-200">导出</a>
+          <!-- Optional Inline Latest Block Reason Bar -->
+          <div v-if="state.strategy.pricing.round_block_count > 0 && state.strategy.pricing.last_block_reason"
+               class="px-3 py-1.5 rounded-lg bg-sub border border-line text-[11px] flex flex-wrap items-center justify-between gap-2">
+            <span class="text-slate-300 leading-snug">
+              <span class="text-amber-400 mono mr-1.5">[{{ fmtTime(state.strategy.pricing.last_block_ts) }}]</span>{{ state.strategy.pricing.last_block_reason }}
+            </span>
+            <span v-if="showBlockDetail && fmtBlockSummary(state.strategy.pricing.round_block_reasons)" class="text-[10px] text-amber-300/90 mono">
+              {{ fmtBlockSummary(state.strategy.pricing.round_block_reasons) }}
+            </span>
+          </div>
+
+          <!-- 4 Recessed Carbon Metric Boxes -->
+          <div class="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3">
+            <div class="term-box p-3">
+              <div class="flex items-center justify-between text-[11px] text-slate-400">
+                <span>净动量</span>
+                <span class="mono font-semibold" :class="(state.strategy.features.energy_accum_score || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'" title="持续能量积累得分">
+                  蓄 {{ (state.strategy.features.energy_accum_score || 0) >= 0 ? '+' : '' }}{{ Number(state.strategy.features.energy_accum_score || 0).toFixed(2) }}
+                </span>
+              </div>
+              <div class="text-xl font-bold mono mt-1 tracking-tight" :class="state.strategy.features.net_power_bps >= 0 ? 'text-emerald-400' : 'text-rose-400'">
+                {{ state.strategy.features.net_power_bps >= 0 ? '+' : '' }}{{ state.strategy.features.net_power_bps }}
+              </div>
+              <div class="text-[11px] mono text-slate-400 mt-1 truncate">多 {{ state.strategy.features.bull_power_bps }} / 空 {{ state.strategy.features.bear_power_bps }}</div>
+            </div>
+
+            <div class="term-box p-3">
+              <div class="flex items-center justify-between text-[11px] text-slate-400">
+                <span>永续流</span>
+                <span class="mono text-slate-300" title="自适应3秒净成交门槛">门 ${{ Math.round(((state.feeds.binance_perp && state.feeds.binance_perp.adaptive_cvd_3s_min_usd) || 65000)/1000) }}k</span>
+              </div>
+              <div class="text-xl font-bold mono mt-1 tracking-tight" :class="(state.strategy.features.orderflow_score || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'">
+                {{ (state.strategy.features.orderflow_score || 0) >= 0 ? '+' : '' }}{{ state.strategy.features.orderflow_score ?? 0 }}
+              </div>
+              <div class="text-[11px] mono text-slate-400 mt-1 truncate">
+                CVD {{ (((state.feeds.binance_perp && state.feeds.binance_perp.cvd_3s_imbalance) || 0)*100).toFixed(0) }}% · 量 {{ Number((state.feeds.binance_perp && state.feeds.binance_perp.vol_3s_rel) || 0).toFixed(1) }}x
               </div>
             </div>
 
-            <!-- Consolidated Performance Grid -->
-            <div class="grid grid-cols-2 sm:grid-cols-3 gap-px bg-line/60 rounded-lg border border-line/70 overflow-hidden">
-              <div class="p-2.5 bg-sub">
-                <div class="text-[10px] text-slate-400">余额</div>
-                <div class="text-sm sm:text-base font-bold mono kpi-val mt-0.5 truncate">${{ Number(state.paper_balance).toFixed(2) }}</div>
+            <div class="term-box p-3">
+              <div class="flex items-center justify-between text-[11px] text-slate-400">
+                <span>价差 Z</span>
+                <span class="mono text-sky-400">理论 {{ ((state.strategy.features.bs_up_prob ?? 0.5)*100).toFixed(0) }}%</span>
               </div>
-              <div class="p-2.5 bg-sub">
-                <div class="text-[10px] text-slate-400">累计盈亏</div>
-                <div class="text-sm sm:text-base font-bold mono mt-0.5 truncate" :class="state.stats.total_pnl >= 0 ? 'kpi-pos' : 'kpi-neg'">
-                  {{ state.stats.total_pnl >= 0 ? '+' : '' }}${{ state.stats.total_pnl }}
-                </div>
+              <div class="text-xl font-bold mono mt-1 tracking-tight" :class="(state.strategy.features.moneyness_z || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'">
+                {{ (state.strategy.features.moneyness_z || 0) >= 0 ? '+' : '' }}{{ state.strategy.features.moneyness_z ?? 0 }}σ
               </div>
-              <div class="p-2.5 bg-sub">
-                <div class="text-[10px] text-slate-400 truncate">胜率 ({{ state.stats.wins }}/{{ state.stats.losses }})</div>
-                <div class="text-sm sm:text-base font-bold mono kpi-val mt-0.5">{{ state.stats.win_rate }}%</div>
-              </div>
-              <div class="p-2.5 bg-sub">
-                <div class="text-[10px] text-slate-400">盈亏比</div>
-                <div class="text-sm font-bold mono kpi-accent mt-0.5">{{ state.stats.profit_factor }}</div>
-              </div>
-              <div class="p-2.5 bg-sub">
-                <div class="text-[10px] text-slate-400">回撤</div>
-                <div class="text-sm font-bold mono kpi-neg mt-0.5">-${{ state.stats.max_drawdown }}</div>
-              </div>
-              <div class="p-2.5 bg-sub">
-                <div class="text-[10px] text-slate-400">24H 盈亏</div>
-                <div class="text-sm font-bold mono mt-0.5 truncate" :class="state.stats.daily_pnl >= 0 ? 'kpi-pos' : 'kpi-neg'">
-                  {{ state.stats.daily_pnl >= 0 ? '+' : '' }}{{ state.stats.daily_pnl }}
-                  <span class="text-[10px] font-normal kpi-fee">费${{ state.stats.total_fees }}</span>
-                </div>
-              </div>
+              <div class="text-[11px] mono text-slate-400 mt-1 truncate">余波 ±{{ state.strategy.features.sigma_rem_bps ?? '--' }} · 敏 {{ ((state.strategy.features.delta_10bps || 0)*100).toFixed(0) }}¢</div>
             </div>
 
-            <div id="equityChart" class="w-full h-52 sm:h-64"></div>
+            <div class="term-box p-3">
+              <div class="flex items-center justify-between text-[11px] text-slate-400">
+                <span>IV / RV</span>
+                <span class="px-1.5 py-0.5 rounded text-[10px] font-medium" :class="ivStateBadge(state.strategy.features.iv_state)">{{ fmtIvState(state.strategy.features.iv_state) }}</span>
+              </div>
+              <div class="text-xl font-bold mono mt-1 tracking-tight" :class="ivRatioColor(state.strategy.features.iv_state)">
+                {{ Number(state.strategy.features.iv_rv_ratio || 1).toFixed(2) }}x
+              </div>
+              <div class="text-[11px] mono text-slate-400 mt-1 truncate">IV {{ state.strategy.features.iv_1s_bps ?? '--' }} / RV {{ state.strategy.features.sigma_1s_bps ?? '--' }}</div>
+            </div>
           </div>
         </div>
 
-        <!-- ZONE 3: Orders Ledger (8/12) + Risk Guardrails (4/12) -->
-        <div class="grid grid-cols-1 lg:grid-cols-12 gap-3 sm:gap-4 items-start">
+        <!-- ZONE 3: Bottom Orders Ledger (8/12) + Risk & Auto-Evolution (4/12) -->
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-3 sm:gap-3.5 items-start">
           <!-- Orders Ledger -->
-          <div class="lg:col-span-8 bg-card border border-line rounded-xl p-3 sm:p-4">
-            <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
-              <div class="flex items-center gap-3">
-                <h3 class="text-sm font-semibold text-white">订单</h3>
-                <label class="flex items-center gap-1.5 text-[11px] text-slate-400 cursor-pointer">
-                  <input v-model="hideCancelled" type="checkbox" class="rounded" />
-                  <span>去撤单</span>
-                </label>
+          <div class="lg:col-span-8 term-card p-3.5 sm:p-4">
+            <div class="flex flex-wrap items-start justify-between gap-2.5 mb-3">
+              <div>
+                <div class="flex items-center gap-2.5">
+                  <h3 class="text-sm font-bold text-white">交易记录</h3>
+                  <label class="flex items-center gap-1.5 text-[11px] text-slate-400 cursor-pointer">
+                    <input v-model="hideCancelled" type="checkbox" class="rounded bg-sub border-line2" />
+                    <span>去撤单</span>
+                  </label>
+                </div>
+                <!-- Inline Performance Summary Strip (PolySniper style) -->
+                <div class="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-[11px] mono text-slate-400">
+                  <span>余额 <strong class="text-white">${{ Number(state.paper_balance).toFixed(2) }}</strong></span>
+                  <span>胜率 <strong class="text-white">{{ state.stats.win_rate }}%</strong> ({{ state.stats.wins }}/{{ state.stats.losses }})</span>
+                  <span>净盈亏 <strong :class="state.stats.total_pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'">{{ state.stats.total_pnl >= 0 ? '+' : '' }}${{ state.stats.total_pnl }}</strong></span>
+                  <span>盈亏比 <strong class="text-sky-400">{{ state.stats.profit_factor }}</strong></span>
+                  <span>回撤 <strong class="text-rose-400">-${{ state.stats.max_drawdown }}</strong></span>
+                  <span>24H <strong :class="state.stats.daily_pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'">{{ state.stats.daily_pnl >= 0 ? '+' : '' }}{{ state.stats.daily_pnl }}</strong></span>
+                </div>
               </div>
-              <div class="flex gap-1 bg-sub p-0.5 rounded-lg border border-line text-[11px]">
-                <button v-for="m in [{k:'ALL',l:'全部'},{k:'PAPER',l:'模拟'},{k:'LIVE',l:'实盘'},{k:'SHADOW',l:'影子'}]" :key="m.k"
-                        @click="orderFilter = m.k; loadTradingData(false)"
-                        class="px-2.5 py-1 sm:py-0.5 rounded-md transition whitespace-nowrap"
-                        :class="orderFilter === m.k ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200'">{{ m.l }}</button>
+
+              <div class="flex flex-wrap items-center gap-1.5 text-[11px]">
+                <div class="flex gap-0.5 bg-sub p-0.5 rounded-lg border border-line2">
+                  <button v-for="m in [{k:'ALL',l:'全部'},{k:'PAPER',l:'模拟'},{k:'LIVE',l:'实盘'},{k:'SHADOW',l:'影子'}]" :key="m.k"
+                          @click="orderFilter = m.k; loadTradingData(false)"
+                          class="px-2 py-0.5 rounded-md transition whitespace-nowrap"
+                          :class="orderFilter === m.k ? 'bg-[#1E293B] text-white font-semibold' : 'text-slate-400 hover:text-slate-100'">{{ m.l }}</button>
+                </div>
+                <a :href="'/api/orders/export?mode=' + orderFilter" target="_blank"
+                   class="px-2.5 py-1 rounded-lg bg-sub hover:bg-slate-800 border border-line2 text-slate-200 transition">导出 CSV</a>
+                <button @click="resetPaper" class="px-2.5 py-1 rounded-lg bg-sub hover:bg-slate-800 border border-line2 text-slate-300 transition">重置</button>
               </div>
             </div>
 
-            <!-- MOBILE Order Card List (< md: tap card to expand full notes) -->
+            <!-- MOBILE Order Cards (< md) -->
             <div class="md:hidden space-y-2 max-h-[440px] overflow-y-auto pr-0.5">
               <div v-for="o in visibleOrders" :key="o.order_id"
                    @click="expandedOrderId = (expandedOrderId === o.order_id ? '' : o.order_id)"
-                   class="bg-sub/85 border border-line/70 rounded-lg p-2.5 space-y-1.5 active:bg-slate-800/60 transition">
+                   class="term-box p-2.5 space-y-1.5 active:bg-slate-900 transition">
                 <div class="flex items-center justify-between gap-2">
                   <div class="flex items-center gap-1.5 min-w-0">
                     <span class="px-1.5 py-0.5 rounded text-[10px] font-bold mono shrink-0"
                           :class="o.side === 'UP' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300'">{{ o.side }}</span>
-                    <span class="text-xs text-slate-200 font-medium truncate">{{ fmtArm(o.arm_id) }}</span>
-                    <span class="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] text-slate-400 shrink-0">{{ fmtMode(o.mode) }}</span>
+                    <span class="text-xs text-white font-medium truncate">{{ fmtArm(o.arm_id) }}</span>
+                    <span class="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] text-slate-300 shrink-0">{{ fmtMode(o.mode) }}</span>
                   </div>
                   <span class="mono text-sm font-bold shrink-0" :class="o.pnl_usdc > 0 ? 'text-emerald-400' : (o.pnl_usdc < 0 ? 'text-rose-400' : 'text-slate-400')">
                     {{ o.pnl_usdc > 0 ? '+' : '' }}{{ Number(o.pnl_usdc).toFixed(2) }}
@@ -594,19 +551,19 @@
                 <div class="flex items-center justify-between gap-2 text-[11px] mono text-slate-400">
                   <div class="flex items-center gap-2 flex-wrap">
                     <span>{{ fmtTime(o.created_at) }}</span>
-                    <span>{{ o.limit_price }}/{{ o.fill_price ?? '--' }}<span v-if="o.exit_price" class="text-amber-300">→{{ o.exit_price }}</span></span>
-                    <span class="text-slate-300">${{ o.size_usdc }}</span>
-                    <span class="text-indigo-300">+{{ (o.edge*100).toFixed(1) }}%</span>
+                    <span class="text-slate-200">{{ o.limit_price }}/{{ o.fill_price ?? '--' }}<span v-if="o.exit_price" class="text-amber-400">→{{ o.exit_price }}</span></span>
+                    <span class="text-white">${{ o.size_usdc }}</span>
+                    <span class="text-sky-400">+{{ (o.edge*100).toFixed(1) }}%</span>
                   </div>
                   <div class="flex items-center gap-1.5 shrink-0 font-sans text-[11px]">
-                    <span :class="o.awaiting_official ? 'text-amber-300' : statusColor(o.status, o.exit_reason)">
+                    <span :class="o.awaiting_official ? 'text-amber-400' : statusColor(o.status, o.exit_reason)">
                       {{ o.awaiting_official ? '待确权' : (o.status === 'CLOSED' && o.exit_reason ? o.exit_reason : fmtStatus(o.status)) }}
                     </span>
                     <span v-if="o.official_outcome" class="mono font-bold" :class="o.official_outcome === 'UP' ? 'text-emerald-400' : 'text-rose-400'">{{ o.official_outcome }}</span>
-                    <span v-else-if="o.awaiting_official && o.provisional_outcome" class="text-[10px] text-amber-300">预{{ o.provisional_outcome }}</span>
+                    <span v-else-if="o.awaiting_official && o.provisional_outcome" class="text-[10px] text-amber-400">预{{ o.provisional_outcome }}</span>
                   </div>
                 </div>
-                <div v-if="expandedOrderId === o.order_id && o.notes" class="pt-1.5 border-t border-line/50 text-[10px] text-slate-400 leading-relaxed break-all">
+                <div v-if="expandedOrderId === o.order_id && o.notes" class="pt-1.5 border-t border-line text-[10px] text-slate-400 leading-relaxed break-all">
                   <div>盘口: {{ o.book_bid && o.book_ask ? (o.book_bid.toFixed(2) + '/' + o.book_ask.toFixed(2)) : '--' }}</div>
                   <div class="mt-0.5">{{ o.notes }}</div>
                 </div>
@@ -614,10 +571,10 @@
               <div v-if="!visibleOrders.length" class="py-10 text-center text-xs text-slate-500">暂无订单</div>
             </div>
 
-            <!-- DESKTOP Full 11-Column Table (>= md) -->
-            <div class="hidden md:block overflow-x-auto max-h-[400px] overflow-y-auto">
+            <!-- DESKTOP Full Orders Table (>= md) -->
+            <div class="hidden md:block overflow-x-auto max-h-[390px] overflow-y-auto">
               <table class="w-full text-xs text-left whitespace-nowrap">
-                <thead class="text-[11px] text-slate-400 border-b border-line sticky top-0 bg-card">
+                <thead class="text-[11px] text-slate-400 border-b border-line sticky top-0 bg-card font-semibold">
                   <tr>
                     <th class="py-2 pr-2">时间</th>
                     <th class="py-2 pr-2">模式</th>
@@ -632,22 +589,22 @@
                     <th class="py-2 text-right">盈亏</th>
                   </tr>
                 </thead>
-                <tbody class="divide-y divide-line/50 mono">
-                  <tr v-for="o in visibleOrders" :key="o.order_id" :title="o.notes || ''" class="hover:bg-slate-800/40">
+                <tbody class="divide-y divide-line mono">
+                  <tr v-for="o in visibleOrders" :key="o.order_id" :title="o.notes || ''" class="hover:bg-[#131B2B] transition-colors">
                     <td class="py-2 pr-2 text-slate-400">{{ fmtTime(o.created_at) }}</td>
-                    <td class="py-2 pr-2"><span class="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] font-sans">{{ fmtMode(o.mode) }}</span></td>
+                    <td class="py-2 pr-2"><span class="px-1.5 py-0.5 rounded bg-sub border border-line text-[10px] text-slate-300 font-sans">{{ fmtMode(o.mode) }}</span></td>
                     <td class="py-2 pr-2 font-bold" :class="o.side === 'UP' ? 'text-emerald-400' : 'text-rose-400'">{{ o.side }}</td>
-                    <td class="py-2 pr-2 text-slate-300 font-sans">{{ fmtArm(o.arm_id) }}</td>
+                    <td class="py-2 pr-2 text-slate-200 font-sans">{{ fmtArm(o.arm_id) }}</td>
                     <td class="py-2 pr-2 text-slate-400">{{ o.book_bid && o.book_ask ? (o.book_bid.toFixed(2) + '/' + o.book_ask.toFixed(2)) : '--' }}</td>
-                    <td class="py-2 pr-2">{{ o.limit_price }}/{{ o.fill_price ?? '--' }}<span v-if="o.exit_price" class="text-amber-300">→{{ o.exit_price }}</span></td>
-                    <td class="py-2 pr-2">${{ o.size_usdc }}</td>
-                    <td class="py-2 pr-2 text-indigo-300">+{{ (o.edge*100).toFixed(1) }}%</td>
-                    <td class="py-2 pr-2 font-sans" :class="o.awaiting_official ? 'text-amber-300' : statusColor(o.status, o.exit_reason)">
+                    <td class="py-2 pr-2 text-white">{{ o.limit_price }}/{{ o.fill_price ?? '--' }}<span v-if="o.exit_price" class="text-amber-400">→{{ o.exit_price }}</span></td>
+                    <td class="py-2 pr-2 text-white">${{ o.size_usdc }}</td>
+                    <td class="py-2 pr-2 text-sky-400">+{{ (o.edge*100).toFixed(1) }}%</td>
+                    <td class="py-2 pr-2 font-sans" :class="o.awaiting_official ? 'text-amber-400' : statusColor(o.status, o.exit_reason)">
                       {{ o.awaiting_official ? '待确权' : (o.status === 'CLOSED' && o.exit_reason ? o.exit_reason : fmtStatus(o.status)) }}
                     </td>
                     <td class="py-2 pr-2">
-                      <span v-if="o.official_outcome" :class="o.official_outcome === 'UP' ? 'text-emerald-400' : 'text-rose-400'">{{ o.official_outcome }}</span>
-                      <span v-else-if="o.awaiting_official && o.provisional_outcome" class="text-[11px] text-amber-300 font-sans">预估 {{ o.provisional_outcome }}</span>
+                      <span v-if="o.official_outcome" class="font-bold" :class="o.official_outcome === 'UP' ? 'text-emerald-400' : 'text-rose-400'">{{ o.official_outcome }}</span>
+                      <span v-else-if="o.awaiting_official && o.provisional_outcome" class="text-[11px] text-amber-400 font-sans">预估 {{ o.provisional_outcome }}</span>
                       <span v-else-if="o.awaiting_official" class="text-[11px] text-amber-400 font-sans">确权中</span>
                       <span v-else class="text-slate-500">--</span>
                     </td>
@@ -661,61 +618,56 @@
             </div>
           </div>
 
-          <!-- Risk Guardrails & AI Autonomous Governance -->
-          <div class="lg:col-span-4 bg-card border border-line rounded-xl p-3 sm:p-4 space-y-3 text-xs">
+          <!-- Risk Guardrails & AI Auto-Governance -->
+          <div class="lg:col-span-4 term-card p-3.5 sm:p-4 space-y-3 text-xs">
             <div class="flex items-center justify-between gap-2">
               <div class="flex items-center gap-2 min-w-0">
-                <h3 class="text-sm font-semibold text-white shrink-0">风控底线</h3>
-                <span class="px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/30 text-[10px] text-emerald-300 truncate">自动进化</span>
+                <h3 class="text-sm font-bold text-white shrink-0">风控底线</h3>
+                <span class="px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/35 text-[10px] text-emerald-300 font-medium">自动进化</span>
               </div>
-              <button @click="saveRisk" class="px-3.5 py-1.5 sm:py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shrink-0">保存</button>
+              <button @click="saveRisk" class="px-3.5 py-1 rounded-lg bg-[#4f46e5] hover:bg-indigo-500 text-white text-xs font-semibold shrink-0 transition">保存</button>
             </div>
 
-            <!-- Only 3 Manual Capital Guardrail Inputs -->
             <div class="grid grid-cols-3 gap-2">
-              <label class="text-slate-400 text-[11px]">仓位($)<input v-model.number="riskForm.unit_size_usdc" type="number" step="1" min="5" class="w-full mt-1 px-2 py-2 sm:py-1.5 rounded bg-sub border border-line mono text-white" /></label>
-              <label class="text-slate-400 text-[11px]">日熔断($)<input v-model.number="riskForm.max_daily_loss_usdc" type="number" step="5" min="10" class="w-full mt-1 px-2 py-2 sm:py-1.5 rounded bg-sub border border-line mono text-white" /></label>
-              <label class="text-slate-400 text-[11px]">连亏(场)<input v-model.number="riskForm.consecutive_loss_limit" type="number" min="2" max="20" class="w-full mt-1 px-2 py-2 sm:py-1.5 rounded bg-sub border border-line mono text-white" /></label>
+              <label class="text-slate-300 text-[11px] font-medium">仓位($)<input v-model.number="riskForm.unit_size_usdc" type="number" step="1" min="5" class="w-full mt-1 px-2 py-1.5 rounded-md bg-sub border border-line2 mono text-white" /></label>
+              <label class="text-slate-300 text-[11px] font-medium">日熔断($)<input v-model.number="riskForm.max_daily_loss_usdc" type="number" step="5" min="10" class="w-full mt-1 px-2 py-1.5 rounded-md bg-sub border border-line2 mono text-white" /></label>
+              <label class="text-slate-300 text-[11px] font-medium">连亏(场)<input v-model.number="riskForm.consecutive_loss_limit" type="number" min="2" max="20" class="w-full mt-1 px-2 py-1.5 rounded-md bg-sub border border-line2 mono text-white" /></label>
             </div>
 
-            <!-- Read-Only AI Autonomous Strategy Matrix -->
-            <div class="bg-sub/80 rounded-lg border border-line/70 p-3 space-y-2.5">
+            <div class="term-box p-3 space-y-2.5">
               <div class="flex items-center justify-between gap-2 text-[11px]">
-                <span class="text-slate-400 shrink-0">最优离场</span>
-                <span class="px-2 py-0.5 rounded bg-indigo-500/20 border border-indigo-500/40 text-indigo-200 font-medium truncate">
+                <span class="text-slate-400">最优离场</span>
+                <span class="px-2 py-0.5 rounded bg-sky-500/15 border border-sky-500/35 text-sky-300 font-semibold truncate">
                   {{ fmtExitArm(state.learning.best_exit_arm) }}
                 </span>
               </div>
 
-              <!-- Auto-Evolved Parameters Pill Grid -->
-              <div class="grid grid-cols-2 gap-1.5 pt-2 border-t border-line/60 mono text-[11px]" v-if="state.learning.auto_params">
-                <div class="bg-card/80 px-2 py-1.5 rounded border border-line/50 flex justify-between">
+              <div class="grid grid-cols-2 gap-1.5 pt-2 border-t border-line mono text-[11px]" v-if="state.learning.auto_params">
+                <div class="bg-card px-2.5 py-1.5 rounded border border-line flex justify-between">
                   <span class="text-slate-400 font-sans">基准优势</span>
-                  <span class="text-emerald-300 font-semibold">{{ (Number(state.learning.auto_params.min_edge || 0.042)*100).toFixed(1) }}%</span>
+                  <span class="text-emerald-400 font-bold">{{ (Number(state.learning.auto_params.min_edge || 0.042)*100).toFixed(1) }}%</span>
                 </div>
-                <div class="bg-card/80 px-2 py-1.5 rounded border border-line/50 flex justify-between">
+                <div class="bg-card px-2.5 py-1.5 rounded border border-line flex justify-between">
                   <span class="text-slate-400 font-sans">最高赔率</span>
-                  <span class="text-sky-300 font-semibold">{{ Math.round(Number(state.learning.auto_params.max_entry_price || 0.75)*100) }}¢</span>
+                  <span class="text-sky-400 font-bold">{{ Math.round(Number(state.learning.auto_params.max_entry_price || 0.75)*100) }}¢</span>
                 </div>
-                <div class="bg-card/80 px-2 py-1.5 rounded border border-line/50 flex justify-between">
+                <div class="bg-card px-2.5 py-1.5 rounded border border-line flex justify-between">
                   <span class="text-slate-400 font-sans">止盈空间</span>
-                  <span class="text-indigo-300 font-semibold">{{ Math.round(Number(state.learning.auto_params.prop_tp_ratio || 0.48)*100) }}%</span>
+                  <span class="text-white font-bold">{{ Math.round(Number(state.learning.auto_params.prop_tp_ratio || 0.48)*100) }}%</span>
                 </div>
-                <div class="bg-card/80 px-2 py-1.5 rounded border border-line/50 flex justify-between">
+                <div class="bg-card px-2.5 py-1.5 rounded border border-line flex justify-between">
                   <span class="text-slate-400 font-sans">锁利上限</span>
-                  <span class="text-amber-300 font-semibold">{{ Number(state.learning.auto_params.arb_max_combined_price || 0.95).toFixed(2) }}</span>
+                  <span class="text-amber-400 font-bold">{{ Number(state.learning.auto_params.arb_max_combined_price || 0.95).toFixed(2) }}</span>
                 </div>
               </div>
 
-              <!-- Sub-Strategies Auto Active / Shadow Recovery Badges -->
-              <div class="pt-2 border-t border-line/60 space-y-1.5" v-if="state.learning.sub_strategies">
-                <div class="text-[10px] text-slate-500">子策略</div>
+              <div class="pt-2 border-t border-line space-y-1.5" v-if="state.learning.sub_strategies">
+                <div class="text-[10px] text-slate-400">子策略</div>
                 <div class="grid grid-cols-2 gap-1.5 text-[11px]">
                   <div v-for="(st, key) in state.learning.sub_strategies" :key="key"
-                       class="px-2.5 py-1.5 rounded bg-card/80 border border-line/50 flex items-center justify-between gap-1">
-                    <span class="text-slate-300 text-[10px] truncate">{{ fmtSubStrat(key) }}</span>
-                    <span class="text-[10px] font-semibold shrink-0"
-                          :class="st.status === 'ACTIVE' ? 'text-emerald-400' : 'text-amber-300'">
+                       class="px-2.5 py-1.5 rounded bg-card border border-line flex items-center justify-between gap-1">
+                    <span class="text-slate-200 text-[10px] truncate">{{ fmtSubStrat(key) }}</span>
+                    <span class="text-[10px] font-semibold shrink-0" :class="st.status === 'ACTIVE' ? 'text-emerald-400' : 'text-amber-400'">
                       {{ st.status === 'ACTIVE' ? '● 运行' : '◐ 影子' }}
                     </span>
                   </div>
@@ -726,136 +678,133 @@
         </div>
       </section>
 
-      <!-- ==================== PAGE 2: 模型与账号 ==================== -->
-      <section v-show="activeTab === 'settings'" class="space-y-3 sm:space-y-4">
-        <!-- SECTION A: Self-Learning Engine -->
-        <div class="bg-card border border-line rounded-xl p-3 sm:p-4 space-y-4">
+      <!-- ==================== PAGE 2: 模型 ==================== -->
+      <section v-show="activeTab === 'settings'" class="space-y-3 sm:space-y-3.5">
+        <!-- Self-Learning Engine -->
+        <div class="term-card p-3.5 sm:p-4 space-y-4">
           <div class="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-line">
             <div class="min-w-0">
               <h2 class="text-sm font-bold text-white">自学习引擎</h2>
-              <p class="text-[11px] text-slate-400 mt-0.5 break-all">主模型 <span class="mono text-indigo-300">{{ state.learning.active_version_id }}</span> · 更新 {{ state.learning.updates_count }} 场</p>
+              <p class="text-[11px] text-slate-400 mt-0.5 break-all">主模型 <span class="mono text-sky-400">{{ state.learning.active_version_id }}</span> · 更新 {{ state.learning.updates_count }} 场</p>
             </div>
-            <!-- Unified Training Controls -->
             <div class="flex flex-wrap items-center gap-2 text-xs w-full sm:w-auto">
-              <div class="flex items-center gap-1.5 bg-sub px-2.5 py-1.5 rounded-lg border border-line">
-                <label class="flex items-center gap-1 text-slate-300 cursor-pointer whitespace-nowrap">
+              <div class="flex items-center gap-1.5 bg-sub px-2.5 py-1.5 rounded-lg border border-line2">
+                <label class="flex items-center gap-1 text-slate-200 cursor-pointer whitespace-nowrap">
                   <input v-model="autoTrainForm.enabled" @change="saveAutoTrain" type="checkbox" class="rounded" />
                   <span>自动</span>
                 </label>
                 <select v-model.number="autoTrainForm.interval_hours" @change="saveAutoTrain"
-                        class="px-1.5 py-0.5 rounded bg-card border border-line text-slate-200 text-[11px]">
+                        class="px-1.5 py-0.5 rounded bg-card border border-line2 text-white text-[11px]">
                   <option :value="2">2小时</option>
                   <option :value="6">6小时</option>
                   <option :value="12">12小时</option>
                   <option :value="24">24小时</option>
                 </select>
-                <span v-if="state.training_status.auto_enabled" class="mono text-[11px] text-indigo-300">{{ fmtCountdown(state.training_status.next_auto_train_ts) }}</span>
+                <span v-if="state.training_status.auto_enabled" class="mono text-[11px] text-emerald-400">{{ fmtCountdown(state.training_status.next_auto_train_ts) }}</span>
               </div>
               <button @click="triggerTrain" :disabled="state.training_status.running"
-                      class="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold disabled:opacity-50">
+                      class="px-3 py-1.5 rounded-lg bg-[#4f46e5] hover:bg-indigo-500 text-white font-semibold disabled:opacity-50">
                 {{ state.training_status.running ? '训练中' : '训练' }}
               </button>
-              <button @click="resetLearning" class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-line text-slate-300">重置权重</button>
-              <button @click="resetDataset" class="px-2.5 py-1.5 rounded-lg bg-rose-950/80 hover:bg-rose-900 border border-rose-500/40 text-rose-200">清空样本</button>
+              <button @click="resetLearning" class="px-2.5 py-1.5 rounded-lg bg-sub hover:bg-slate-800 border border-line2 text-slate-200">重置权重</button>
+              <button @click="resetDataset" class="px-2.5 py-1.5 rounded-lg bg-rose-950/70 hover:bg-rose-900/80 border border-rose-500/40 text-rose-200">清空样本</button>
             </div>
           </div>
 
-          <!-- Compact 3-stat strip -->
-          <div class="grid grid-cols-3 gap-px bg-line/60 rounded-lg border border-line/70 overflow-hidden">
-            <div class="p-2.5 sm:p-3 bg-sub/90">
-              <div class="text-[10px] sm:text-[11px] text-slate-400 truncate">Brier</div>
-              <div class="text-base sm:text-xl font-bold mono mt-0.5" :class="state.learning.rolling_brier < 0.22 ? 'text-emerald-400' : 'text-amber-300'">
+          <div class="grid grid-cols-3 gap-2.5 sm:gap-3">
+            <div class="term-box p-3">
+              <div class="text-[11px] text-slate-400">Brier</div>
+              <div class="text-lg sm:text-xl font-bold mono mt-0.5" :class="state.learning.rolling_brier < 0.22 ? 'text-emerald-400' : 'text-amber-400'">
                 {{ state.learning.rolling_brier }}
               </div>
               <div class="text-[10px] text-slate-500">&lt;0.25 有效</div>
             </div>
-            <div class="p-2.5 sm:p-3 bg-sub/90">
-              <div class="text-[10px] sm:text-[11px] text-slate-400 truncate">样本库</div>
-              <div class="text-base sm:text-xl font-bold mono text-white mt-0.5">
-                {{ state.dataset_counts.settled_rounds }} <span class="text-[11px] font-normal text-slate-400">场</span>
+            <div class="term-box p-3">
+              <div class="text-[11px] text-slate-400">样本库</div>
+              <div class="text-lg sm:text-xl font-bold mono text-white mt-0.5">
+                {{ state.dataset_counts.settled_rounds }} <span class="text-xs font-normal text-slate-400">场</span>
               </div>
-              <div class="text-[10px] mono text-slate-500 truncate">{{ state.dataset_counts.total_slices }} 条切片</div>
+              <div class="text-[10px] mono text-slate-400 truncate">{{ state.dataset_counts.total_slices }} 条切片</div>
             </div>
-            <div class="p-2.5 sm:p-3 bg-sub/90">
-              <div class="text-[10px] sm:text-[11px] text-slate-400 truncate">模型数</div>
-              <div class="text-base sm:text-xl font-bold mono text-indigo-300 mt-0.5">{{ modelVersions.length }} <span class="text-[11px] font-normal text-slate-400">个</span></div>
+            <div class="term-box p-3">
+              <div class="text-[11px] text-slate-400">模型数</div>
+              <div class="text-lg sm:text-xl font-bold mono text-sky-400 mt-0.5">{{ modelVersions.length }} <span class="text-xs font-normal text-slate-400">个</span></div>
               <div class="text-[10px] text-slate-500">满16场训练</div>
             </div>
           </div>
 
-          <!-- 2x2 Learning Details Grid -->
-          <div class="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
-            <div class="bg-sub/60 border border-line/70 rounded-lg p-3 sm:p-3.5">
-              <h3 class="text-xs font-semibold text-white mb-2.5">执行策略</h3>
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            <div class="term-box p-3.5">
+              <h3 class="text-xs font-bold text-white mb-2.5">执行策略</h3>
               <div class="overflow-x-auto">
                 <table class="w-full text-xs text-left mono whitespace-nowrap">
-                  <thead class="text-slate-400 border-b border-line/70">
+                  <thead class="text-slate-400 border-b border-line font-sans">
                     <tr><th class="py-1.5 pr-3">策略</th><th class="pr-3">报价</th><th class="pr-3">超时</th><th class="pr-3">样本</th><th class="text-right">收益率</th></tr>
                   </thead>
-                  <tbody class="divide-y divide-line/40">
+                  <tbody class="divide-y divide-line">
                     <tr v-for="a in state.learning.arms" :key="a.id">
-                      <td class="py-1.5 pr-3 text-slate-200 font-sans">{{ fmtArm(a.id) }}</td>
-                      <td class="pr-3 font-sans">{{ a.is_taker ? '市价' : '买一+' + (a.offset_cents*100).toFixed(0) + '分' }}</td>
-                      <td class="pr-3">{{ (a.ttl_ms/1000).toFixed(1) }}s</td>
-                      <td class="pr-3">{{ Number(a.count).toFixed(1) }}</td>
-                      <td class="text-right" :class="a.mean_ev >= 0 ? 'text-emerald-400' : 'text-rose-400'">{{ (a.mean_ev*100).toFixed(2) }}%</td>
+                      <td class="py-1.5 pr-3 text-white font-sans">{{ fmtArm(a.id) }}</td>
+                      <td class="pr-3 font-sans text-slate-300">{{ a.is_taker ? '市价' : '买一+' + (a.offset_cents*100).toFixed(0) + '分' }}</td>
+                      <td class="pr-3 text-slate-300">{{ (a.ttl_ms/1000).toFixed(1) }}s</td>
+                      <td class="pr-3 text-slate-300">{{ Number(a.count).toFixed(1) }}</td>
+                      <td class="text-right font-semibold" :class="a.mean_ev >= 0 ? 'text-emerald-400' : 'text-rose-400'">{{ (a.mean_ev*100).toFixed(2) }}%</td>
                     </tr>
                   </tbody>
                 </table>
               </div>
             </div>
 
-            <div class="bg-sub/60 border border-line/70 rounded-lg p-3 sm:p-3.5">
-              <h3 class="text-xs font-semibold text-white mb-2.5">时段门槛</h3>
+            <div class="term-box p-3.5">
+              <h3 class="text-xs font-bold text-white mb-2.5">时段门槛</h3>
               <div class="overflow-x-auto">
                 <table class="w-full text-xs text-left mono whitespace-nowrap">
-                  <thead class="text-slate-400 border-b border-line/70">
+                  <thead class="text-slate-400 border-b border-line font-sans">
                     <tr><th class="py-1.5 pr-3">时段</th><th class="pr-3">门槛(基点)</th><th class="pr-3">胜/负</th><th class="text-right">收益率</th></tr>
                   </thead>
-                  <tbody class="divide-y divide-line/40">
+                  <tbody class="divide-y divide-line">
                     <tr v-for="(b, k) in state.learning.time_buckets" :key="k">
-                      <td class="py-1.5 pr-3 text-slate-200">{{ k.replace('_', '-') }}s</td>
-                      <td class="pr-3 text-indigo-300 font-bold">{{ b.net_power_min_bps }}</td>
-                      <td class="pr-3">{{ b.wins }}胜/{{ b.losses }}负</td>
-                      <td class="text-right" :class="b.ema_ev >= 0 ? 'text-emerald-400' : 'text-rose-400'">{{ (b.ema_ev*100).toFixed(2) }}%</td>
+                      <td class="py-1.5 pr-3 text-white">{{ k.replace('_', '-') }}s</td>
+                      <td class="pr-3 text-sky-400 font-bold">{{ b.net_power_min_bps }}</td>
+                      <td class="pr-3 text-slate-300">{{ b.wins }}胜/{{ b.losses }}负</td>
+                      <td class="text-right font-semibold" :class="b.ema_ev >= 0 ? 'text-emerald-400' : 'text-rose-400'">{{ (b.ema_ev*100).toFixed(2) }}%</td>
                     </tr>
                   </tbody>
                 </table>
               </div>
             </div>
 
-            <div class="bg-sub/60 border border-line/70 rounded-lg p-3 sm:p-3.5">
-              <h3 class="text-xs font-semibold text-white mb-2.5">特征权重</h3>
+            <div class="term-box p-3.5">
+              <h3 class="text-xs font-bold text-white mb-2.5">特征权重</h3>
               <div class="space-y-1.5 text-xs mono">
                 <div v-for="fw in state.learning.feature_weights" :key="fw.name" class="flex items-center gap-2 sm:gap-3">
-                  <span class="w-28 sm:w-36 text-slate-400 truncate font-sans text-[11px] sm:text-xs">{{ fmtFeature(fw.name) }}</span>
-                  <div class="flex-1 bg-slate-900 h-2 rounded overflow-hidden">
+                  <span class="w-28 sm:w-36 text-slate-300 truncate font-sans text-[11px]">{{ fmtFeature(fw.name) }}</span>
+                  <div class="flex-1 bg-[#182234] h-2 rounded overflow-hidden">
                     <div class="h-full" :class="fw.weight >= 0 ? 'bg-emerald-500' : 'bg-rose-500'" :style="{width: Math.min(100, Math.abs(fw.weight)*30) + '%'}"></div>
                   </div>
-                  <span class="w-12 text-right shrink-0" :class="fw.weight >= 0 ? 'text-emerald-400' : 'text-rose-400'">{{ fw.weight }}</span>
+                  <span class="w-12 text-right shrink-0 font-semibold" :class="fw.weight >= 0 ? 'text-emerald-400' : 'text-rose-400'">{{ fw.weight }}</span>
                 </div>
               </div>
             </div>
 
-            <div class="bg-sub/60 border border-line/70 rounded-lg p-3 sm:p-3.5">
+            <div class="term-box p-3.5">
               <div class="flex justify-between items-center mb-2.5">
-                <h3 class="text-xs font-semibold text-white">模型版本</h3>
-                <button @click="loadModels" class="text-[11px] text-indigo-400 hover:underline">刷新</button>
+                <h3 class="text-xs font-bold text-white">模型版本</h3>
+                <button @click="loadModels" class="text-[11px] text-sky-400 hover:underline">刷新</button>
               </div>
               <div class="overflow-x-auto max-h-52 overflow-y-auto">
                 <table class="w-full text-xs text-left mono whitespace-nowrap">
-                  <thead class="text-slate-400 border-b border-line/70">
+                  <thead class="text-slate-400 border-b border-line font-sans">
                     <tr><th class="py-1.5 pr-3">版本</th><th class="pr-2">状态</th><th class="pr-2">场次</th><th class="pr-2">误差</th><th class="pr-2">区分度</th><th class="text-right">操作</th></tr>
                   </thead>
-                  <tbody class="divide-y divide-line/40">
+                  <tbody class="divide-y divide-line">
                     <tr v-for="m in modelVersions" :key="m.version_id">
-                      <td class="py-1.5 pr-3 text-slate-300">{{ m.version_id }}</td>
+                      <td class="py-1.5 pr-3 text-white">{{ m.version_id }}</td>
                       <td class="pr-2"><span class="px-1.5 py-0.5 rounded text-[10px] font-sans" :class="m.role === 'CHAMPION' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-slate-800 text-slate-400'">{{ fmtRole(m.role) }}</span></td>
-                      <td class="pr-2">{{ m.train_rounds }}</td>
-                      <td class="pr-2">{{ m.val_brier }}</td>
-                      <td class="pr-2">{{ m.val_auc }}</td>
+                      <td class="pr-2 text-slate-300">{{ m.train_rounds }}</td>
+                      <td class="pr-2 text-slate-300">{{ m.val_brier }}</td>
+                      <td class="pr-2 text-slate-300">{{ m.val_auc }}</td>
                       <td class="text-right font-sans">
-                        <button v-if="m.role !== 'CHAMPION'" @click="promoteModel(m.version_id)" class="text-indigo-400 hover:underline">切换</button>
+                        <button v-if="m.role !== 'CHAMPION'" @click="promoteModel(m.version_id)" class="text-sky-400 hover:underline">切换</button>
                         <span v-else class="text-emerald-400">生效中</span>
                       </td>
                     </tr>
@@ -866,50 +815,47 @@
             </div>
           </div>
 
-          <!-- Counterfactual Exit Arms & Sub-Strategy Self-Gating -->
-          <div class="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
-            <div class="bg-sub/60 border border-line/70 rounded-lg p-3 sm:p-3.5" v-if="state.learning.exit_arms && state.learning.exit_arms.length">
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            <div class="term-box p-3.5" v-if="state.learning.exit_arms && state.learning.exit_arms.length">
               <div class="flex flex-wrap items-center justify-between gap-1.5 mb-2.5">
-                <h3 class="text-xs font-semibold text-white">离场策略</h3>
-                <span class="text-[10px] text-indigo-300">主选: {{ fmtExitArm(state.learning.best_exit_arm) }}</span>
+                <h3 class="text-xs font-bold text-white">离场策略</h3>
+                <span class="text-[11px] text-sky-400">主选: {{ fmtExitArm(state.learning.best_exit_arm) }}</span>
               </div>
               <div class="overflow-x-auto">
                 <table class="w-full text-xs text-left mono whitespace-nowrap">
-                  <thead class="text-slate-400 border-b border-line/70 font-sans">
+                  <thead class="text-slate-400 border-b border-line font-sans">
                     <tr><th class="py-1.5 pr-3">模式</th><th class="pr-3">样本</th><th class="pr-3">胜/负</th><th class="pr-3">Alpha</th><th class="text-right">收益</th></tr>
                   </thead>
-                  <tbody class="divide-y divide-line/40">
+                  <tbody class="divide-y divide-line">
                     <tr v-for="ea in state.learning.exit_arms" :key="ea.id">
-                      <td class="py-1.5 pr-3 font-sans" :class="ea.id === state.learning.best_exit_arm ? 'text-indigo-300 font-semibold' : 'text-slate-200'">
-                        {{ fmtExitArm(ea.id) }}
-                      </td>
-                      <td class="pr-3">{{ Number(ea.count).toFixed(1) }}</td>
-                      <td class="pr-3">{{ ea.wins }}胜/{{ ea.losses }}负</td>
-                      <td class="pr-3" :class="(ea.alpha_ema || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'">{{ (ea.alpha_ema || 0) >= 0 ? '+' : '' }}{{ ((ea.alpha_ema || 0)*100).toFixed(2) }}%</td>
-                      <td class="text-right" :class="ea.mean_ev >= 0 ? 'text-emerald-400' : 'text-rose-400'">{{ (ea.mean_ev*100).toFixed(2) }}%</td>
+                      <td class="py-1.5 pr-3 font-sans" :class="ea.id === state.learning.best_exit_arm ? 'text-sky-300 font-semibold' : 'text-white'">{{ fmtExitArm(ea.id) }}</td>
+                      <td class="pr-3 text-slate-300">{{ Number(ea.count).toFixed(1) }}</td>
+                      <td class="pr-3 text-slate-300">{{ ea.wins }}胜/{{ ea.losses }}负</td>
+                      <td class="pr-3 font-semibold" :class="(ea.alpha_ema || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'">{{ (ea.alpha_ema || 0) >= 0 ? '+' : '' }}{{ ((ea.alpha_ema || 0)*100).toFixed(2) }}%</td>
+                      <td class="text-right font-semibold" :class="ea.mean_ev >= 0 ? 'text-emerald-400' : 'text-rose-400'">{{ (ea.mean_ev*100).toFixed(2) }}%</td>
                     </tr>
                   </tbody>
                 </table>
               </div>
             </div>
 
-            <div class="bg-sub/60 border border-line/70 rounded-lg p-3 sm:p-3.5" v-if="state.learning.sub_strategies">
-              <h3 class="text-xs font-semibold text-white mb-2.5">子策略状态</h3>
+            <div class="term-box p-3.5" v-if="state.learning.sub_strategies">
+              <h3 class="text-xs font-bold text-white mb-2.5">子策略状态</h3>
               <div class="overflow-x-auto">
                 <table class="w-full text-xs text-left mono whitespace-nowrap">
-                  <thead class="text-slate-400 border-b border-line/70 font-sans">
+                  <thead class="text-slate-400 border-b border-line font-sans">
                     <tr><th class="py-1.5 pr-3">策略</th><th class="pr-3">状态</th><th class="pr-3">胜/负</th><th class="pr-3">ROI</th><th class="text-right">影子</th></tr>
                   </thead>
-                  <tbody class="divide-y divide-line/40">
+                  <tbody class="divide-y divide-line">
                     <tr v-for="(st, k) in state.learning.sub_strategies" :key="k">
-                      <td class="py-1.5 pr-3 text-slate-200 font-sans">{{ fmtSubStrat(k) }}</td>
+                      <td class="py-1.5 pr-3 text-white font-sans">{{ fmtSubStrat(k) }}</td>
                       <td class="pr-3 font-sans">
                         <span class="px-1.5 py-0.5 rounded text-[10px]" :class="st.status === 'ACTIVE' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/20 text-amber-300'">
                           {{ st.status === 'ACTIVE' ? '运行中' : '影子休眠' }}
                         </span>
                       </td>
-                      <td class="pr-3">{{ st.wins }}胜/{{ st.losses }}负</td>
-                      <td class="pr-3" :class="st.ema_roi >= 0 ? 'text-emerald-400' : 'text-rose-400'">{{ (st.ema_roi*100).toFixed(2) }}%</td>
+                      <td class="pr-3 text-slate-300">{{ st.wins }}胜/{{ st.losses }}负</td>
+                      <td class="pr-3 font-semibold" :class="st.ema_roi >= 0 ? 'text-emerald-400' : 'text-rose-400'">{{ (st.ema_roi*100).toFixed(2) }}%</td>
                       <td class="text-right text-slate-400">{{ st.shadow_samples }}单 ({{ (st.shadow_ema_roi*100).toFixed(1) }}%)</td>
                     </tr>
                   </tbody>
@@ -918,52 +864,44 @@
             </div>
           </div>
 
-          <!-- Adaptive Price-Zone Edge Curve (Self-Evolving) -->
-          <div class="bg-sub/60 border border-line/70 rounded-lg p-3 sm:p-3.5" v-if="state.learning.edge_curve">
+          <div class="term-box p-3.5" v-if="state.learning.edge_curve">
             <div class="flex flex-wrap items-center justify-between gap-2 mb-2.5">
-              <h3 class="text-xs font-semibold text-white">价位门槛</h3>
+              <h3 class="text-xs font-bold text-white">价位门槛</h3>
               <span class="text-[11px] mono text-slate-400">
-                25¢→<strong class="text-amber-300">{{ fmtDynEdge(0.25) }}</strong> ·
+                25¢→<strong class="text-amber-400">{{ fmtDynEdge(0.25) }}</strong> ·
                 50¢→<strong class="text-emerald-400">{{ fmtDynEdge(0.50) }}</strong> ·
-                75¢→<strong class="text-sky-300">{{ fmtDynEdge(0.75) }}</strong>
+                75¢→<strong class="text-sky-400">{{ fmtDynEdge(0.75) }}</strong>
               </span>
             </div>
             <div class="overflow-x-auto">
               <table class="w-full text-xs text-left mono whitespace-nowrap">
-                <thead class="text-slate-400 border-b border-line/70 font-sans">
-                  <tr>
-                    <th class="py-1.5 pr-3">区间</th>
-                    <th class="pr-3">参数</th>
-                    <th class="pr-3">门槛</th>
-                    <th class="pr-3">偏差</th>
-                    <th class="pr-3">胜 / 负</th>
-                    <th class="text-right">收益</th>
-                  </tr>
+                <thead class="text-slate-400 border-b border-line font-sans">
+                  <tr><th class="py-1.5 pr-3">区间</th><th class="pr-3">参数</th><th class="pr-3">门槛</th><th class="pr-3">偏差</th><th class="pr-3">胜 / 负</th><th class="text-right">收益</th></tr>
                 </thead>
-                <tbody class="divide-y divide-line/40">
+                <tbody class="divide-y divide-line">
                   <tr>
-                    <td class="py-1.5 pr-3 text-amber-300 font-sans font-medium">低价区 (&lt;45¢)</td>
-                    <td class="pr-3">斜率 {{ state.learning.edge_curve.low_slope }} · 缩仓 {{ state.learning.edge_curve.low_size_mult }}x</td>
-                    <td class="pr-3 text-amber-200">{{ fmtDynEdge(0.44) }} ~ {{ fmtDynEdge(0.20) }}</td>
+                    <td class="py-1.5 pr-3 text-amber-400 font-sans font-medium">低价区 (&lt;45¢)</td>
+                    <td class="pr-3 text-slate-300">斜率 {{ state.learning.edge_curve.low_slope }} · 缩仓 {{ state.learning.edge_curve.low_size_mult }}x</td>
+                    <td class="pr-3 text-amber-300">{{ fmtDynEdge(0.44) }} ~ {{ fmtDynEdge(0.20) }}</td>
                     <td class="pr-3" :class="Math.abs(zoneStat('low').ema_calib_bias) > 0.035 ? 'text-rose-400' : 'text-slate-300'">{{ fmtBias(zoneStat('low').ema_calib_bias) }}</td>
-                    <td class="pr-3">{{ zoneStat('low').wins }}胜/{{ zoneStat('low').losses }}负</td>
-                    <td class="text-right" :class="zoneStat('low').ema_roi >= 0 ? 'text-emerald-400' : 'text-rose-400'">{{ (zoneStat('low').ema_roi * 100).toFixed(2) }}%</td>
+                    <td class="pr-3 text-slate-300">{{ zoneStat('low').wins }}胜/{{ zoneStat('low').losses }}负</td>
+                    <td class="text-right font-semibold" :class="zoneStat('low').ema_roi >= 0 ? 'text-emerald-400' : 'text-rose-400'">{{ (zoneStat('low').ema_roi * 100).toFixed(2) }}%</td>
                   </tr>
                   <tr>
                     <td class="py-1.5 pr-3 text-emerald-400 font-sans font-medium">中枢区 (45-60¢)</td>
-                    <td class="pr-3">偏置 {{ (state.learning.edge_curve.mid_offset >= 0 ? '+' : '') + (state.learning.edge_curve.mid_offset * 100).toFixed(2) }}%</td>
+                    <td class="pr-3 text-slate-300">偏置 {{ (state.learning.edge_curve.mid_offset >= 0 ? '+' : '') + (state.learning.edge_curve.mid_offset * 100).toFixed(2) }}%</td>
                     <td class="pr-3 text-emerald-300">{{ fmtDynEdge(0.50) }}</td>
                     <td class="pr-3" :class="Math.abs(zoneStat('mid').ema_calib_bias) > 0.035 ? 'text-rose-400' : 'text-slate-300'">{{ fmtBias(zoneStat('mid').ema_calib_bias) }}</td>
-                    <td class="pr-3">{{ zoneStat('mid').wins }}胜/{{ zoneStat('mid').losses }}负</td>
-                    <td class="text-right" :class="zoneStat('mid').ema_roi >= 0 ? 'text-emerald-400' : 'text-rose-400'">{{ (zoneStat('mid').ema_roi * 100).toFixed(2) }}%</td>
+                    <td class="pr-3 text-slate-300">{{ zoneStat('mid').wins }}胜/{{ zoneStat('mid').losses }}负</td>
+                    <td class="text-right font-semibold" :class="zoneStat('mid').ema_roi >= 0 ? 'text-emerald-400' : 'text-rose-400'">{{ (zoneStat('mid').ema_roi * 100).toFixed(2) }}%</td>
                   </tr>
                   <tr>
-                    <td class="py-1.5 pr-3 text-sky-300 font-sans font-medium">高价区 (&gt;60¢)</td>
-                    <td class="pr-3">斜率 {{ state.learning.edge_curve.high_slope }}</td>
-                    <td class="pr-3 text-sky-200">{{ fmtDynEdge(0.61) }} ~ {{ fmtDynEdge(0.75) }}</td>
+                    <td class="py-1.5 pr-3 text-sky-400 font-sans font-medium">高价区 (&gt;60¢)</td>
+                    <td class="pr-3 text-slate-300">斜率 {{ state.learning.edge_curve.high_slope }}</td>
+                    <td class="pr-3 text-sky-300">{{ fmtDynEdge(0.61) }} ~ {{ fmtDynEdge(0.75) }}</td>
                     <td class="pr-3" :class="Math.abs(zoneStat('high').ema_calib_bias) > 0.035 ? 'text-rose-400' : 'text-slate-300'">{{ fmtBias(zoneStat('high').ema_calib_bias) }}</td>
-                    <td class="pr-3">{{ zoneStat('high').wins }}胜/{{ zoneStat('high').losses }}负</td>
-                    <td class="text-right" :class="zoneStat('high').ema_roi >= 0 ? 'text-emerald-400' : 'text-rose-400'">{{ (zoneStat('high').ema_roi * 100).toFixed(2) }}%</td>
+                    <td class="pr-3 text-slate-300">{{ zoneStat('high').wins }}胜/{{ zoneStat('high').losses }}负</td>
+                    <td class="text-right font-semibold" :class="zoneStat('high').ema_roi >= 0 ? 'text-emerald-400' : 'text-rose-400'">{{ (zoneStat('high').ema_roi * 100).toFixed(2) }}%</td>
                   </tr>
                 </tbody>
               </table>
@@ -971,104 +909,103 @@
           </div>
         </div>
 
-        <!-- SECTION B: Account, Wallet & Security -->
-        <div class="bg-card border border-line rounded-xl p-3 sm:p-4 space-y-4">
+        <!-- Wallet & Security -->
+        <div class="term-card p-3.5 sm:p-4 space-y-4">
           <div class="flex items-center justify-between pb-3 border-b border-line">
             <h2 class="text-sm font-bold text-white">钱包与安全</h2>
-            <button @click="refreshBalance" class="px-3 py-1.5 sm:py-1 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/40 text-indigo-200 text-xs">刷新资产</button>
+            <button @click="refreshBalance" class="px-3 py-1 rounded-lg bg-sub hover:bg-slate-800 border border-line2 text-slate-200 text-xs">刷新资产</button>
           </div>
 
-          <!-- Unified Asset Strip -->
-          <div class="grid grid-cols-2 md:grid-cols-5 gap-px bg-line/60 rounded-lg border border-line/70 overflow-hidden">
-            <div class="p-3 bg-sub/90">
+          <div class="grid grid-cols-2 md:grid-cols-5 gap-2.5">
+            <div class="term-box p-3">
               <div class="text-[11px] text-slate-400">总净值</div>
-              <div class="text-base sm:text-lg font-bold mono text-white mt-0.5">${{ state.portfolio.total_equity }}</div>
+              <div class="text-lg font-bold mono text-white mt-0.5">${{ state.portfolio.total_equity }}</div>
             </div>
-            <div class="p-3 bg-sub/90">
+            <div class="term-box p-3">
               <div class="text-[11px] text-slate-400">USDC.e</div>
-              <div class="text-base sm:text-lg font-bold mono text-emerald-400 mt-0.5">${{ state.portfolio.usdc_balance }}</div>
+              <div class="text-lg font-bold mono text-emerald-400 mt-0.5">${{ state.portfolio.usdc_balance }}</div>
             </div>
-            <div class="p-3 bg-sub/90">
+            <div class="term-box p-3">
               <div class="text-[11px] text-slate-400">持仓</div>
-              <div class="text-base sm:text-lg font-bold mono text-sky-400 mt-0.5">${{ state.portfolio.portfolio_value }}</div>
+              <div class="text-lg font-bold mono text-sky-400 mt-0.5">${{ state.portfolio.portfolio_value }}</div>
             </div>
-            <div class="p-3 bg-sub/90">
+            <div class="term-box p-3">
               <div class="text-[11px] text-slate-400">授权</div>
               <div class="text-sm font-bold mt-1.5" :class="state.portfolio.allowance_ok ? 'text-emerald-400' : 'text-amber-400'">
                 {{ state.portfolio.allowance_ok ? '已授权' : '未授权' }}
               </div>
             </div>
-            <div class="p-3 bg-sub/90 col-span-2 md:col-span-1 min-w-0">
+            <div class="term-box p-3 col-span-2 md:col-span-1 min-w-0">
               <div class="text-[11px] text-slate-400">地址</div>
               <div class="text-xs mono text-slate-200 mt-1 truncate" :title="state.wallet.wallet_address || ''">{{ state.wallet.wallet_address || '未配置' }}</div>
               <div class="text-[10px] text-slate-500 mt-0.5">API: {{ state.wallet.has_api_creds ? '已派生' : '未派生' }}</div>
             </div>
           </div>
 
-          <div v-if="state.portfolio.open_positions && state.portfolio.open_positions.length" class="overflow-x-auto bg-sub/60 rounded-lg border border-line/70 p-3">
+          <div v-if="state.portfolio.open_positions && state.portfolio.open_positions.length" class="overflow-x-auto term-box p-3">
             <table class="w-full text-xs text-left mono whitespace-nowrap">
-              <thead class="text-slate-400 border-b border-line/70">
+              <thead class="text-slate-400 border-b border-line font-sans">
                 <tr><th class="py-1.5 pr-3">市场</th><th class="pr-3">方向</th><th class="pr-3">份额</th><th class="pr-3">均价</th><th class="pr-3">现价</th><th class="pr-3">市值</th><th class="text-right">浮盈</th></tr>
               </thead>
-              <tbody class="divide-y divide-line/40">
+              <tbody class="divide-y divide-line">
                 <tr v-for="(p, idx) in state.portfolio.open_positions" :key="idx">
-                  <td class="py-1.5 pr-3 text-slate-200 max-w-[180px] sm:max-w-xs truncate font-sans">{{ p.title }}</td>
-                  <td class="pr-3">{{ p.outcome }}</td><td class="pr-3">{{ p.size }}</td><td class="pr-3">{{ p.avg_price }}</td><td class="pr-3">{{ p.cur_price }}</td><td class="pr-3">${{ p.current_value }}</td>
-                  <td class="text-right" :class="p.cash_pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'">{{ p.cash_pnl }}</td>
+                  <td class="py-1.5 pr-3 text-white max-w-[180px] sm:max-w-xs truncate font-sans">{{ p.title }}</td>
+                  <td class="pr-3 text-slate-300">{{ p.outcome }}</td><td class="pr-3 text-slate-300">{{ p.size }}</td><td class="pr-3 text-slate-300">{{ p.avg_price }}</td><td class="pr-3 text-slate-300">{{ p.cur_price }}</td><td class="pr-3 text-white">${{ p.current_value }}</td>
+                  <td class="text-right font-semibold" :class="p.cash_pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'">{{ p.cash_pnl }}</td>
                 </tr>
               </tbody>
             </table>
           </div>
 
-          <div class="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
-            <div class="bg-sub/60 border border-line/70 rounded-lg p-3.5 space-y-2.5 text-xs">
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            <div class="term-box p-3.5 space-y-2.5 text-xs">
               <div class="flex justify-between items-center gap-2">
-                <h3 class="text-xs font-semibold text-white">钱包与 API</h3>
-                <button @click="genObserver" class="px-2.5 py-1 sm:py-0.5 rounded bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 text-emerald-300 text-[11px] shrink-0">只读凭证</button>
+                <h3 class="text-xs font-bold text-white">钱包与 API</h3>
+                <button @click="genObserver" class="px-2.5 py-1 rounded bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/35 text-emerald-300 text-[11px] shrink-0">只读凭证</button>
               </div>
               <div>
-                <label class="text-slate-400">私钥 (加密存储，留空不变)</label>
-                <input v-model="walletForm.private_key" type="password" placeholder="0x..." class="w-full mt-1 px-3 py-2 sm:py-1.5 rounded bg-card border border-line mono text-white" />
+                <label class="text-slate-300">私钥 (加密存储，留空不变)</label>
+                <input v-model="walletForm.private_key" type="password" placeholder="0x..." class="w-full mt-1 px-3 py-2 rounded-md bg-card border border-line2 mono text-white" />
               </div>
-              <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-2">
-                <label class="text-slate-400">钱包类型
-                  <select v-model.number="walletForm.signature_type" class="w-full mt-1 px-2.5 py-2 sm:py-1.5 rounded bg-card border border-line text-white">
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <label class="text-slate-300">钱包类型
+                  <select v-model.number="walletForm.signature_type" class="w-full mt-1 px-2.5 py-2 rounded-md bg-card border border-line2 text-white">
                     <option :value="0">0 · EOA 钱包</option>
                     <option :value="1">1 · Magic 代理</option>
                     <option :value="2">2 · Gnosis Safe</option>
                   </select>
                 </label>
-                <label class="text-slate-400">代理地址 (Funder)
-                  <input v-model="walletForm.funder_address" type="text" placeholder="0x..." class="w-full mt-1 px-2.5 py-2 sm:py-1.5 rounded bg-card border border-line mono text-white" />
+                <label class="text-slate-300">代理地址 (Funder)
+                  <input v-model="walletForm.funder_address" type="text" placeholder="0x..." class="w-full mt-1 px-2.5 py-2 rounded-md bg-card border border-line2 mono text-white" />
                 </label>
               </div>
               <div class="flex gap-2 pt-1">
-                <button @click="saveWallet" class="flex-1 py-2.5 sm:py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-white font-semibold">保存</button>
-                <button @click="deriveApi" class="flex-1 py-2.5 sm:py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold">派生 API</button>
+                <button @click="saveWallet" class="flex-1 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-line2 text-white font-semibold">保存</button>
+                <button @click="deriveApi" class="flex-1 py-2 rounded-lg bg-[#4f46e5] hover:bg-indigo-500 text-white font-semibold">派生 API</button>
               </div>
             </div>
 
             <div class="space-y-3">
-              <div class="bg-sub/60 border border-line/70 rounded-lg p-3.5 space-y-2.5 text-xs">
-                <h3 class="text-xs font-semibold text-white">登录密码</h3>
+              <div class="term-box p-3.5 space-y-2.5 text-xs">
+                <h3 class="text-xs font-bold text-white">登录密码</h3>
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  <input v-model="pwdForm.old_password" type="password" placeholder="当前密码" class="px-3 py-2 sm:py-1.5 rounded bg-card border border-line text-white" />
-                  <input v-model="pwdForm.new_password" type="password" placeholder="新密码 (至少6位)" class="px-3 py-2 sm:py-1.5 rounded bg-card border border-line text-white" />
+                  <input v-model="pwdForm.old_password" type="password" placeholder="当前密码" class="px-3 py-2 rounded-md bg-card border border-line2 text-white" />
+                  <input v-model="pwdForm.new_password" type="password" placeholder="新密码 (至少6位)" class="px-3 py-2 rounded-md bg-card border border-line2 text-white" />
                 </div>
-                <button @click="changePwd" class="w-full sm:w-auto px-4 py-2 sm:py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-semibold">更新密码</button>
+                <button @click="changePwd" class="w-full sm:w-auto px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-semibold">更新密码</button>
               </div>
 
-              <div class="bg-sub/60 border border-line/70 rounded-lg p-3.5 space-y-2.5 text-xs">
+              <div class="term-box p-3.5 space-y-2.5 text-xs">
                 <div class="flex justify-between items-center">
-                  <h3 class="text-xs font-semibold text-white">告警</h3>
-                  <label class="flex items-center gap-1.5 cursor-pointer text-slate-300"><input v-model="webhookForm.enabled" type="checkbox" /> 启用</label>
+                  <h3 class="text-xs font-bold text-white">告警</h3>
+                  <label class="flex items-center gap-1.5 cursor-pointer text-slate-200"><input v-model="webhookForm.enabled" type="checkbox" /> 启用</label>
                 </div>
-                <input v-model="webhookForm.feishu_url" type="text" placeholder="飞书 Webhook URL" class="w-full px-3 py-2 sm:py-1.5 rounded bg-card border border-line text-white" />
+                <input v-model="webhookForm.feishu_url" type="text" placeholder="飞书 Webhook URL" class="w-full px-3 py-2 rounded-md bg-card border border-line2 text-white" />
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  <input v-model="webhookForm.telegram_bot_token" type="text" placeholder="Telegram Bot Token" class="px-3 py-2 sm:py-1.5 rounded bg-card border border-line text-white" />
-                  <input v-model="webhookForm.telegram_chat_id" type="text" placeholder="Telegram Chat ID" class="px-3 py-2 sm:py-1.5 rounded bg-card border border-line text-white" />
+                  <input v-model="webhookForm.telegram_bot_token" type="text" placeholder="Telegram Bot Token" class="px-3 py-2 rounded-md bg-card border border-line2 text-white" />
+                  <input v-model="webhookForm.telegram_chat_id" type="text" placeholder="Telegram Chat ID" class="px-3 py-2 rounded-md bg-card border border-line2 text-white" />
                 </div>
-                <button @click="saveWebhook" class="w-full sm:w-auto px-4 py-2 sm:py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-white font-semibold">保存告警</button>
+                <button @click="saveWebhook" class="w-full sm:w-auto px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-line2 text-white font-semibold">保存告警</button>
               </div>
             </div>
           </div>
@@ -1120,6 +1057,7 @@ createApp({
     const mobileTelemetryOpen = ref(false);
     const expandedOrderId = ref('');
     const showBlockDetail = ref(false);
+    const rightChartMode = ref('book');
 
     const tabs = [
       { id: 'home', label: '交易' },
@@ -1158,7 +1096,12 @@ createApp({
     let lastSettledWin = 0;
 
     let liveChart = null;
+    let liveChartInited = false;
+    let bookChart = null;
+    let bookChartInited = false;
     let equityChart = null;
+    let equityChartInited = false;
+    let lastEquitySig = '';
     let ws = null;
 
     function notify(msg, type = 'ok') {
@@ -1207,28 +1150,92 @@ createApp({
     }
 
     function updateLiveChart() {
-      if (activeTab.value !== 'home' || !state.chart_points.length) return;
-      const dom = document.getElementById('liveChart');
-      if (!dom) return;
-      if (!liveChart) liveChart = echarts.init(dom);
+      if (document.hidden || activeTab.value !== 'home' || !state.chart_points.length) return;
       const pts = state.chart_points;
+      const tArr = pts.map(p => p.t);
       const narrow = window.innerWidth < 640;
-      liveChart.setOption({
-        backgroundColor: 'transparent',
-        tooltip: { trigger: 'axis', confine: true },
-        legend: { data: ['现价', '60s均价', '目标价', '动量'], textStyle: { color: '#94a3b8', fontSize: narrow ? 10 : 11 }, itemWidth: narrow ? 12 : 18, itemGap: narrow ? 8 : 12, top: 0 },
-        grid: { left: narrow ? 46 : 56, right: narrow ? 32 : 42, top: 28, bottom: 20 },
-        xAxis: { type: 'category', data: pts.map(p => p.t), axisLabel: { color: '#64748b', fontSize: narrow ? 9 : 10 } },
-        yAxis: [
-          { type: 'value', scale: true, splitLine: { lineStyle: { color: '#1b263b' } }, axisLabel: { color: '#94a3b8', fontSize: narrow ? 9 : 10 } },
-          { type: 'value', scale: true, splitLine: { show: false }, axisLabel: { color: '#818cf8', fontSize: narrow ? 9 : 10 } },
-        ],
-        series: [
-          { name: '现价', type: 'line', showSymbol: false, data: pts.map(p => p.oracle_spot ?? p.twap60), lineStyle: { color: '#38bdf8', width: 1.5 } },
-          { name: '60s均价', type: 'line', showSymbol: false, data: pts.map(p => p.twap60), lineStyle: { color: '#34d399', width: 2 } },
-          { name: '目标价', type: 'line', showSymbol: false, data: pts.map(p => p.strike), lineStyle: { color: '#fbbf24', type: 'dashed', width: 1.5 } },
-          { name: '动量', type: 'bar', yAxisIndex: 1, data: pts.map(p => p.net_power_bps), itemStyle: { color: (p) => p.value >= 0 ? 'rgba(52,211,153,0.32)' : 'rgba(251,113,133,0.32)' } },
-        ]
+
+      // 1. Left BTC Price + 60s TWAP + Strike + Momentum Chart (incremental zero-animation)
+      const dom = document.getElementById('liveChart');
+      if (dom) {
+        if (!liveChart) {
+          liveChart = echarts.init(dom, null, { renderer: 'canvas' });
+          liveChartInited = false;
+        }
+        const sSpot = pts.map(p => p.oracle_spot ?? p.twap60);
+        const sTwap = pts.map(p => p.twap60);
+        const sStrike = pts.map(p => p.strike);
+        const sMom = pts.map(p => p.net_power_bps);
+        if (!liveChartInited) {
+          liveChart.setOption({
+            animation: false,
+            backgroundColor: '#070B12',
+            tooltip: { trigger: 'axis', confine: true, backgroundColor: '#0E1420', borderColor: '#334155', textStyle: { color: '#f8fafc', fontSize: 11 } },
+            legend: { data: ['现价', '60s均价', '目标价', '动量'], textStyle: { color: '#94a3b8', fontSize: narrow ? 10 : 11 }, itemWidth: narrow ? 12 : 16, itemGap: narrow ? 8 : 12, top: 4 },
+            grid: { left: narrow ? 48 : 58, right: narrow ? 32 : 40, top: 30, bottom: 22 },
+            xAxis: { type: 'category', data: tArr, axisLine: { lineStyle: { color: '#1E293B' } }, axisLabel: { color: '#94a3b8', fontSize: narrow ? 9 : 10 } },
+            yAxis: [
+              { type: 'value', scale: true, splitLine: { lineStyle: { color: '#141D2E' } }, axisLabel: { color: '#cbd5e1', fontSize: narrow ? 9 : 10 } },
+              { type: 'value', scale: true, splitLine: { show: false }, axisLabel: { color: '#64748b', fontSize: narrow ? 9 : 10 } },
+            ],
+            series: [
+              { name: '现价', type: 'line', showSymbol: false, data: sSpot, lineStyle: { color: '#38bdf8', width: 1.6 } },
+              { name: '60s均价', type: 'line', showSymbol: false, data: sTwap, lineStyle: { color: '#f59e0b', width: 1.8 } },
+              { name: '目标价', type: 'line', showSymbol: false, data: sStrike, lineStyle: { color: '#fbbf24', type: 'dashed', width: 1.2 } },
+              { name: '动量', type: 'bar', yAxisIndex: 1, data: sMom, itemStyle: { color: (p) => p.value >= 0 ? 'rgba(16,185,129,0.32)' : 'rgba(244,63,94,0.32)' } },
+            ]
+          });
+          liveChartInited = true;
+        } else {
+          liveChart.setOption({
+            xAxis: { data: tArr },
+            series: [{ data: sSpot }, { data: sTwap }, { data: sStrike }, { data: sMom }]
+          }, false, true);
+        }
+      }
+
+      // 2. Right Polymarket UP / DOWN Dual-Line Orderbook Chart (when 'book' tab active)
+      if (rightChartMode.value === 'book') {
+        const bdom = document.getElementById('bookChart');
+        if (bdom) {
+          if (!bookChart) {
+            bookChart = echarts.init(bdom, null, { renderer: 'canvas' });
+            bookChartInited = false;
+          }
+          const sUp = pts.map(p => Number(p.pm_up_mid ?? 50));
+          const sDn = pts.map(p => p.pm_down_mid != null ? Number(p.pm_down_mid) : Number((100 - Number(p.pm_up_mid ?? 50)).toFixed(1)));
+          if (!bookChartInited) {
+            bookChart.setOption({
+              animation: false,
+              backgroundColor: '#070B12',
+              tooltip: { trigger: 'axis', confine: true, backgroundColor: '#0E1420', borderColor: '#334155', textStyle: { color: '#f8fafc', fontSize: 11 } },
+              legend: { data: ['UP 盘口(¢)', 'DOWN 盘口(¢)'], textStyle: { color: '#94a3b8', fontSize: narrow ? 10 : 11 }, itemWidth: 14, top: 4 },
+              grid: { left: narrow ? 38 : 44, right: 14, top: 30, bottom: 22 },
+              xAxis: { type: 'category', data: tArr, axisLine: { lineStyle: { color: '#1E293B' } }, axisLabel: { color: '#94a3b8', fontSize: narrow ? 9 : 10 } },
+              yAxis: { type: 'value', min: 0, max: 100, interval: 25, splitLine: { lineStyle: { color: '#141D2E' } }, axisLabel: { color: '#cbd5e1', fontSize: narrow ? 9 : 10, formatter: '{value}¢' } },
+              series: [
+                { name: 'UP 盘口(¢)', type: 'line', showSymbol: false, data: sUp, lineStyle: { color: '#10b981', width: 2 }, areaStyle: { color: 'rgba(16,185,129,0.08)' } },
+                { name: 'DOWN 盘口(¢)', type: 'line', showSymbol: false, data: sDn, lineStyle: { color: '#f43f5e', width: 2 }, areaStyle: { color: 'rgba(244,63,94,0.08)' } },
+              ]
+            });
+            bookChartInited = true;
+          } else {
+            bookChart.setOption({ xAxis: { data: tArr }, series: [{ data: sUp }, { data: sDn }] }, false, true);
+          }
+        }
+      }
+    }
+
+    function setRightChartMode(m) {
+      rightChartMode.value = m;
+      nextTick(() => {
+        if (m === 'book') {
+          updateLiveChart();
+          if (bookChart) bookChart.resize();
+        } else {
+          if (equityChart) equityChart.resize();
+          loadTradingData(true);
+        }
       });
     }
 
@@ -1245,18 +1252,34 @@ createApp({
 
         await nextTick();
         const dom = document.getElementById('equityChart');
-        if (dom) {
-          if (!equityChart) equityChart = echarts.init(dom);
+        if (dom && !document.hidden) {
           const curve = results[1].curve || [];
-          const narrowEq = window.innerWidth < 640;
-          equityChart.setOption({
-            backgroundColor: 'transparent',
-            tooltip: { trigger: 'axis', confine: true },
-            grid: { left: narrowEq ? 44 : 50, right: narrowEq ? 10 : 16, top: 16, bottom: 20 },
-            xAxis: { type: 'category', data: curve.map(c => fmtTime(c.ts)), axisLabel: { color: '#64748b', fontSize: narrowEq ? 9 : 10 } },
-            yAxis: { type: 'value', scale: true, splitLine: { lineStyle: { color: '#1b263b' } }, axisLabel: { color: '#94a3b8', fontSize: narrowEq ? 9 : 10 } },
-            series: [{ name: '余额($)', type: 'line', smooth: true, showSymbol: false, data: curve.map(c => c.balance_usdc), areaStyle: { color: 'rgba(99,102,241,0.16)' }, lineStyle: { color: '#818cf8', width: 2 } }]
-          });
+          const lastPt = curve.length ? curve[curve.length - 1] : null;
+          const sig = `${curve.length}:${lastPt ? lastPt.ts : 0}:${lastPt ? lastPt.balance_usdc : 0}`;
+          if (!equityChart) {
+            equityChart = echarts.init(dom, null, { renderer: 'canvas' });
+            equityChartInited = false;
+          }
+          if (!equityChartInited || sig !== lastEquitySig) {
+            lastEquitySig = sig;
+            const xData = curve.map(c => fmtTime(c.ts));
+            const yData = curve.map(c => c.balance_usdc);
+            if (!equityChartInited) {
+              const narrowEq = window.innerWidth < 640;
+              equityChart.setOption({
+                animation: false,
+                backgroundColor: '#070B12',
+                tooltip: { trigger: 'axis', confine: true, backgroundColor: '#0E1420', borderColor: '#334155', textStyle: { color: '#f8fafc', fontSize: 11 } },
+                grid: { left: narrowEq ? 44 : 50, right: narrowEq ? 10 : 16, top: 18, bottom: 22 },
+                xAxis: { type: 'category', data: xData, axisLine: { lineStyle: { color: '#1E293B' } }, axisLabel: { color: '#94a3b8', fontSize: narrowEq ? 9 : 10 } },
+                yAxis: { type: 'value', scale: true, splitLine: { lineStyle: { color: '#141D2E' } }, axisLabel: { color: '#cbd5e1', fontSize: narrowEq ? 9 : 10 } },
+                series: [{ name: '余额($)', type: 'line', smooth: true, showSymbol: false, data: yData, areaStyle: { color: 'rgba(16,185,129,0.14)' }, lineStyle: { color: '#10b981', width: 2 } }]
+              });
+              equityChartInited = true;
+            } else {
+              equityChart.setOption({ xAxis: { data: xData }, series: [{ data: yData }] }, false, true);
+            }
+          }
         }
       } catch (e) { if (!silent) notify(e.message, 'error'); }
     }
@@ -1284,6 +1307,7 @@ createApp({
         if (id === 'home') {
           loadTradingData(false);
           if (liveChart) liveChart.resize();
+          if (bookChart) bookChart.resize();
           if (equityChart) equityChart.resize();
           updateLiveChart();
         }
@@ -1515,20 +1539,20 @@ createApp({
       if (s === 'IV_OVERPRICED') return 'bg-emerald-500/20 text-emerald-300';
       if (s === 'IV_UNDERPRICED') return 'bg-rose-500/20 text-rose-300';
       if (s === 'DRIFT_INVERSION') return 'bg-amber-500/20 text-amber-300';
-      return 'bg-slate-800 text-slate-400';
+      return 'bg-slate-800/90 text-slate-200 border border-slate-700';
     }
     function ivRatioColor(s) {
-      if (s === 'IV_OVERPRICED') return 'kpi-pos';
-      if (s === 'IV_UNDERPRICED') return 'kpi-neg';
-      if (s === 'DRIFT_INVERSION') return 'kpi-warn';
-      return 'kpi-val';
+      if (s === 'IV_OVERPRICED') return 'text-emerald-400';
+      if (s === 'IV_UNDERPRICED') return 'text-rose-400';
+      if (s === 'DRIFT_INVERSION') return 'text-amber-300';
+      return 'text-white';
     }
     function statusColor(s, exitReason) {
       if (s === 'CLOSED') return (exitReason && exitReason.includes('止损')) ? 'text-rose-400' : 'text-emerald-400';
       if (s === 'SETTLED') return 'text-emerald-400';
       if (s === 'FILLED') return 'text-sky-400';
       if (s === 'UNVERIFIED') return 'text-amber-400';
-      return 'text-slate-400';
+      return 'text-slate-300';
     }
     function fmtCountdown(targetTs) {
       if (!targetTs) return '--';
@@ -1674,16 +1698,23 @@ createApp({
       } catch {}
       const onResize = () => {
         if (liveChart) liveChart.resize();
+        if (bookChart) bookChart.resize();
         if (equityChart) equityChart.resize();
       };
       window.addEventListener('resize', onResize);
       window.addEventListener('orientationchange', () => setTimeout(onResize, 180));
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden && activeTab.value === 'home') {
+          updateLiveChart();
+          onResize();
+        }
+      });
     });
 
     return {
       authenticated, isDefaultPassword, loginPassword, loggingIn, wsConnected, activeTab, tabs, state, toast,
       orderFilter, hideCancelled, orders, visibleOrders, modelVersions, riskForm, walletForm, pwdForm, webhookForm, autoTrainForm,
-      mobileTelemetryOpen, expandedOrderId, showBlockDetail, feedHealthSummary, feedFaults, feedTooltip, inspectFeed,
+      mobileTelemetryOpen, expandedOrderId, showBlockDetail, rightChartMode, setRightChartMode, feedHealthSummary, feedFaults, feedTooltip, inspectFeed,
       doLogin, doLogout, switchTab, setMode, resetPaper, resetBreaker, saveRisk, loadTradingData,
       triggerTrain, loadModels, promoteModel, saveWallet, deriveApi, genObserver, refreshBalance,
       changePwd, saveWebhook, resetLearning, resetDataset, saveAutoTrain,

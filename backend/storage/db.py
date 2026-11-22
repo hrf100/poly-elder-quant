@@ -16,11 +16,18 @@ class Database:
         self._lock = threading.RLock()
         self._conn = sqlite3.connect(self.db_path, check_same_thread=False, timeout=15.0)
         self._conn.row_factory = sqlite3.Row
+        # v29 read-through memory caches (eliminates 1 Hz SQLite full scans & kv reads)
+        self._kv_cache: dict[str, Any] = {}
+        self._json_cache: dict[str, Any] = {}
+        self._stats_cache: dict[str, tuple[float, dict]] = {}
+        self._slice_counts_cache: Optional[dict] = None
+        self._window_orders_cache: dict[int, list[dict]] = {}
         with self._lock:
             self._conn.execute("PRAGMA journal_mode=WAL;")
             self._conn.execute("PRAGMA synchronous=NORMAL;")
             self._conn.execute("PRAGMA temp_store=MEMORY;")
             self._conn.execute("PRAGMA cache_size=-16000;")
+            self._conn.execute("PRAGMA mmap_size=67108864;")
             self._init_schema()
             self._init_defaults()
 
@@ -120,6 +127,8 @@ class Database:
             );
             CREATE INDEX IF NOT EXISTS idx_orders_mode_ts ON orders(mode, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_orders_window ON orders(window_ts);
+            CREATE INDEX IF NOT EXISTS idx_orders_mode_status ON orders(mode, status, settled_at);
+            CREATE INDEX IF NOT EXISTS idx_rounds_status ON rounds(status);
 
             CREATE TABLE IF NOT EXISTS equity_curve (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -233,29 +242,49 @@ class Database:
 
     def get_kv(self, key: str, default: Any = None) -> Any:
         with self._lock:
+            if key in self._kv_cache:
+                val = self._kv_cache[key]
+                return default if val is None else val
             row = self._conn.execute("SELECT value FROM kv_store WHERE key=?", (key,)).fetchone()
-            return row["value"] if row else default
+            val = row["value"] if row else None
+            self._kv_cache[key] = val
+            return default if val is None else val
 
     def get_json(self, key: str, default: Any = None) -> Any:
-        raw = self.get_kv(key)
-        if raw is None:
-            return default
-        try:
-            return json.loads(raw)
-        except Exception:
-            return default
+        with self._lock:
+            if key in self._json_cache:
+                cached = self._json_cache[key]
+                if cached is None:
+                    return default
+                return dict(cached) if isinstance(cached, dict) else cached
+            raw = self.get_kv(key)
+            if raw is None:
+                self._json_cache[key] = None
+                return default
+            try:
+                parsed = json.loads(raw)
+                self._json_cache[key] = parsed
+                return dict(parsed) if isinstance(parsed, dict) else parsed
+            except Exception:
+                return default
 
     def set_kv(self, key: str, value: str) -> None:
+        sval = str(value)
         with self._lock:
             self._conn.execute(
                 "INSERT INTO kv_store (key, value, updated_at) VALUES (?, ?, ?) "
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
-                (key, str(value), time.time()),
+                (key, sval, time.time()),
             )
             self._conn.commit()
+            self._kv_cache[key] = sval
+            self._json_cache.pop(key, None)
 
     def set_json(self, key: str, obj: Any) -> None:
-        self.set_kv(key, json.dumps(obj, ensure_ascii=False))
+        raw = json.dumps(obj, ensure_ascii=False)
+        with self._lock:
+            self.set_kv(key, raw)
+            self._json_cache[key] = obj
 
     def upsert_round(self, data: dict) -> None:
         with self._lock:
@@ -296,6 +325,7 @@ class Database:
                 (settlement_price, official_outcome, time.time(), price_to_beat, window_ts),
             )
             self._conn.commit()
+            self._slice_counts_cache = None
 
     def insert_slice(self, s: dict) -> None:
         s.setdefault("moneyness_z", 0.0)
@@ -335,6 +365,8 @@ class Database:
                 s,
             )
             self._conn.commit()
+            if self._slice_counts_cache is not None:
+                self._slice_counts_cache["total_slices"] += 1
 
     def save_order(self, order: dict) -> None:
         order.setdefault("book_bid", None)
@@ -377,6 +409,8 @@ class Database:
                 order,
             )
             self._conn.commit()
+            self._stats_cache.pop(str(order.get("mode") or ""), None)
+            self._window_orders_cache.pop(int(order["window_ts"]), None)
 
     def get_orders(self, mode: Optional[str] = None, limit: int = 100) -> list[dict]:
         with self._lock:
@@ -391,9 +425,17 @@ class Database:
             return [dict(r) for r in rows]
 
     def get_orders_by_window(self, window_ts: int) -> list[dict]:
+        wts = int(window_ts)
         with self._lock:
-            rows = self._conn.execute("SELECT * FROM orders WHERE window_ts=?", (window_ts,)).fetchall()
-            return [dict(r) for r in rows]
+            cached = self._window_orders_cache.get(wts)
+            if cached is not None:
+                return [dict(o) for o in cached]
+            rows = self._conn.execute("SELECT * FROM orders WHERE window_ts=?", (wts,)).fetchall()
+            res = [dict(r) for r in rows]
+            if len(self._window_orders_cache) > 12:
+                self._window_orders_cache.clear()
+            self._window_orders_cache[wts] = res
+            return [dict(o) for o in res]
 
     def record_equity(self, mode: str, window_ts: int, balance_usdc: float, cumulative_pnl: float, trade_count: int) -> None:
         with self._lock:
@@ -412,7 +454,11 @@ class Database:
             return [dict(r) for r in reversed(rows)]
 
     def get_performance_stats(self, mode: str = "PAPER") -> dict:
+        now = time.time()
         with self._lock:
+            cached = self._stats_cache.get(mode)
+            if cached is not None and (now - cached[0]) < 30.0:
+                return dict(cached[1])
             rows = self._conn.execute(
                 "SELECT pnl_usdc, fee_usdc, size_usdc, status FROM orders WHERE mode=? AND status IN ('SETTLED', 'CLOSED') ORDER BY settled_at ASC",
                 (mode,),
@@ -442,7 +488,7 @@ class Database:
                 (mode, day_start),
             ).fetchone()
 
-            return {
+            res = {
                 "mode": mode,
                 "total_trades": total,
                 "wins": wins,
@@ -455,6 +501,8 @@ class Database:
                 "max_drawdown": round(max_dd, 4),
                 "early_exits": sum(1 for r in rows if r["status"] == "CLOSED"),
             }
+            self._stats_cache[mode] = (now, res)
+            return dict(res)
 
     def get_round(self, window_ts: int) -> Optional[dict]:
         with self._lock:
@@ -525,9 +573,12 @@ class Database:
 
     def get_slice_counts(self) -> dict:
         with self._lock:
+            if self._slice_counts_cache is not None:
+                return dict(self._slice_counts_cache)
             r_cnt = self._conn.execute("SELECT COUNT(*) as c FROM rounds WHERE status='SETTLED'").fetchone()["c"]
             s_cnt = self._conn.execute("SELECT COUNT(*) as c FROM episode_slices").fetchone()["c"]
-            return {"settled_rounds": r_cnt, "total_slices": s_cnt}
+            self._slice_counts_cache = {"settled_rounds": r_cnt, "total_slices": s_cnt}
+            return dict(self._slice_counts_cache)
 
     def save_model_version(self, m: dict) -> None:
         with self._lock:
@@ -572,6 +623,7 @@ class Database:
         with self._lock:
             cur = self._conn.execute("DELETE FROM episode_slices WHERE ts < ?", (cutoff,))
             self._conn.commit()
+            self._slice_counts_cache = None
             return cur.rowcount
 
     def reset_dataset(self, clear_models: bool = True) -> dict:
@@ -587,6 +639,7 @@ class Database:
                 self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
             except Exception:
                 pass
+            self._slice_counts_cache = {"settled_rounds": 0, "total_slices": 0}
         return {
             "deleted_slices": slices_del,
             "deleted_rounds": rounds_del,
@@ -602,5 +655,8 @@ class Database:
                 (time.time(), initial_balance),
             )
             self._conn.commit()
+        with self._lock:
+            self._stats_cache.pop("PAPER", None)
+            self._window_orders_cache.clear()
         self.set_kv("paper_initial_balance", str(initial_balance))
         self.set_kv("paper_balance", str(initial_balance))

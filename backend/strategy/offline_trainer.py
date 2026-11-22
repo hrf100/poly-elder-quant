@@ -84,7 +84,10 @@ class OfflineModelWrapper:
         if expected_dim < x.shape[1]:
             x = x[:, :expected_dim]
         if self.model_type == "lightgbm":
-            return float(self.model_obj.predict(x)[0])
+            try:
+                return float(self.model_obj.predict(x, num_threads=1)[0])
+            except TypeError:
+                return float(self.model_obj.predict(x)[0])
         x_norm = (x - self.mean) / np.where(self.std < 1e-6, 1.0, self.std)
         return float(self.model_obj.predict_proba(x_norm)[0, 1])
 
@@ -206,6 +209,7 @@ def run_walk_forward_training(db: Database, min_rounds: int = 24) -> dict:
             "bagging_freq": 1,
             "lambda_l2": 5.0,
             "n_jobs": 1,
+            "num_threads": 1,
             "verbose": -1,
         }
         bst = lgb.train(params, dtrain, num_boost_round=120, valid_sets=[dval], callbacks=[lgb.early_stopping(15, verbose=False)])

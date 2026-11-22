@@ -1,3 +1,17 @@
+import os
+
+# CRITICAL v29: Force single-threaded passive OpenMP/BLAS BEFORE numpy/lightgbm/sklearn import
+# Eliminates 30-80% idle OpenMP spin-wait CPU burn on 1-2 vCPU VPS instances!
+for _env_k, _env_v in (
+    ("OMP_NUM_THREADS", "1"),
+    ("OPENBLAS_NUM_THREADS", "1"),
+    ("MKL_NUM_THREADS", "1"),
+    ("NUMEXPR_NUM_THREADS", "1"),
+    ("VECLIB_MAXIMUM_THREADS", "1"),
+    ("OMP_WAIT_POLICY", "PASSIVE"),
+):
+    os.environ.setdefault(_env_k, _env_v)
+
 import asyncio
 import csv
 import io
@@ -20,6 +34,7 @@ from backend.auth_crypto import (
     verify_access_token,
     verify_password,
 )
+from backend.fast_json import dumps_str as fast_dumps_str
 from backend.execution.engine import QuantTradingEngine
 from backend.storage.db import Database
 
@@ -28,10 +43,46 @@ db = Database()
 engine = QuantTradingEngine(db)
 
 
+_ws_clients: set[WebSocket] = set()
+_ws_broadcast_task: Optional[asyncio.Task] = None
+_ws_latest_frame: str = ""
+
+
+async def _ws_broadcast_loop():
+    """Single shared 1 Hz broadcaster: zero serialization CPU when no browser is connected."""
+    global _ws_latest_frame
+    while True:
+        try:
+            if not _ws_clients:
+                await asyncio.sleep(1.0)
+                continue
+            frame = fast_dumps_str(engine.get_live_state_payload())
+            _ws_latest_frame = frame
+            clients = tuple(_ws_clients)
+
+            async def _push(ws: WebSocket):
+                try:
+                    await asyncio.wait_for(ws.send_text(frame), timeout=2.5)
+                except Exception:
+                    _ws_clients.discard(ws)
+
+            await asyncio.gather(*(_push(c) for c in clients), return_exceptions=True)
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            pass
+        await asyncio.sleep(1.0)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _ws_broadcast_task
     await engine.start()
+    _ws_broadcast_task = asyncio.create_task(_ws_broadcast_loop())
     yield
+    if _ws_broadcast_task:
+        _ws_broadcast_task.cancel()
+        await asyncio.gather(_ws_broadcast_task, return_exceptions=True)
     await engine.stop()
 
 
@@ -352,14 +403,18 @@ async def ws_live(websocket: WebSocket):
         await websocket.close(code=4401)
         return
     await websocket.accept()
+    _ws_clients.add(websocket)
     try:
+        init_frame = _ws_latest_frame or fast_dumps_str(engine.get_live_state_payload())
+        await websocket.send_text(init_frame)
         while True:
-            await websocket.send_text(json.dumps(engine.get_live_state_payload(), ensure_ascii=False))
-            await asyncio.sleep(1.0)
+            await websocket.receive_text()
     except WebSocketDisconnect:
         pass
     except Exception:
         pass
+    finally:
+        _ws_clients.discard(websocket)
 
 
 # -------- Serve Zero-Build SPA Frontend --------

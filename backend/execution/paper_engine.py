@@ -231,9 +231,14 @@ class PaperExecutionEngine:
                     self.on_orderbook_tick(side, b, event_type="sweep")
 
     def on_orderbook_tick(self, side: str, book: dict, event_type: str = "book"):
+        if not self.pending_orders and not self.pending_exits:
+            return
         # 1. Process pending intraday SELL exits first
-        self._process_pending_exits(side, book, event_type=event_type)
+        if self.pending_exits:
+            self._process_pending_exits(side, book, event_type=event_type)
 
+        if not self.pending_orders:
+            return
         # 2. Process pending entry BUY orders
         now = time.time()
         best_ask = float(book.get("best_ask") or 0.0)
