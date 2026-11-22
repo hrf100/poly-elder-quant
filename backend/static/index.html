@@ -29,6 +29,24 @@
   <style>
     html, body { background: #090e1a; color: #e2e8f0; font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; overflow-x: hidden; -webkit-tap-highlight-color: transparent; }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-variant-numeric: tabular-nums; }
+    /* PC 端强制高对比：同时写 color 与 -webkit-text-fill-color，避免字体/扩展把数字渲成黑块 */
+    .kpi-val, .kpi-pos, .kpi-neg, .kpi-accent, .kpi-warn, .kpi-fee, .kpi-muted {
+      font-weight: 700;
+    }
+    .kpi-val { color: #f1f5f9 !important; -webkit-text-fill-color: #f1f5f9 !important; }
+    .kpi-pos { color: #4ade80 !important; -webkit-text-fill-color: #4ade80 !important; }
+    .kpi-neg { color: #fb7185 !important; -webkit-text-fill-color: #fb7185 !important; }
+    .kpi-accent { color: #a5b4fc !important; -webkit-text-fill-color: #a5b4fc !important; }
+    .kpi-warn { color: #fbbf24 !important; -webkit-text-fill-color: #fbbf24 !important; }
+    .kpi-fee, .kpi-muted { color: #94a3b8 !important; -webkit-text-fill-color: #94a3b8 !important; font-weight: 500; }
+    /* 兜底：暗色卡片里的粗体等宽数字默认提亮 */
+    .bg-card .font-bold.mono,
+    .bg-sub .font-bold.mono,
+    .bg-sub\/90 .font-bold.mono,
+    .bg-sub\/70 .font-bold.mono {
+      color: #e2e8f0;
+      -webkit-text-fill-color: #e2e8f0;
+    }
     ::-webkit-scrollbar { width: 5px; height: 5px; }
     ::-webkit-scrollbar-thumb { background: #2c3b54; border-radius: 3px; }
     .no-scrollbar::-webkit-scrollbar { display: none; }
@@ -84,7 +102,7 @@
           <div class="flex items-center gap-1.5 sm:gap-2 min-w-0">
             <span class="sm:hidden w-2 h-2 rounded-full shrink-0" :class="wsConnected ? 'bg-emerald-400' : 'bg-rose-500'"></span>
             <span class="font-bold text-sm text-white tracking-tight truncate">PolyQuant <span class="text-indigo-400">BTC 5m</span></span>
-            <span class="px-1.5 py-0.5 rounded bg-slate-800/90 text-[10px] mono text-slate-400 shrink-0">v27</span>
+            <span class="px-1.5 py-0.5 rounded bg-slate-800/90 text-[10px] mono text-slate-400 shrink-0">v29</span>
           </div>
           <!-- Desktop Tabs (hidden on mobile; mobile uses fixed bottom tab bar) -->
           <nav class="hidden sm:flex items-center gap-1 bg-sub p-0.5 rounded-lg border border-line">
@@ -314,24 +332,24 @@
               </div>
 
               <!-- 3 Core Anchor Prices -->
-              <div class="grid grid-cols-3 gap-2 sm:gap-3 bg-sub/70 rounded-lg p-2.5 sm:p-3 border border-line/60">
+              <div class="grid grid-cols-3 gap-2 sm:gap-3 bg-sub rounded-lg p-2.5 sm:p-3 border border-line/60">
                 <div class="min-w-0">
                   <div class="text-[10px] sm:text-[11px] text-slate-400 truncate">目标价</div>
-                  <div class="text-[15px] sm:text-xl font-bold mono text-white mt-0.5 truncate">${{ state.round.price_to_beat }}</div>
+                  <div class="text-[15px] sm:text-xl font-bold mono kpi-val mt-0.5 truncate">${{ state.round.price_to_beat }}</div>
                 </div>
                 <div class="min-w-0">
                   <div class="text-[10px] sm:text-[11px] text-slate-400 truncate">60s均价</div>
-                  <div class="text-[15px] sm:text-xl font-bold mono mt-0.5 truncate" :class="Number(state.round.twap_diff_usd || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'">
+                  <div class="text-[15px] sm:text-xl font-bold mono mt-0.5 truncate" :class="Number(state.round.twap_diff_usd || 0) >= 0 ? 'kpi-pos' : 'kpi-neg'">
                     ${{ state.round.twap60 }}
                   </div>
-                  <div v-if="state.round.twap_diff_usd !== null" class="text-[10px] sm:text-[11px] mono truncate" :class="Number(state.round.twap_diff_usd) >= 0 ? 'text-emerald-400/90' : 'text-rose-400/90'">
+                  <div v-if="state.round.twap_diff_usd !== null" class="text-[10px] sm:text-[11px] mono truncate" :class="Number(state.round.twap_diff_usd) >= 0 ? 'kpi-pos' : 'kpi-neg'">
                     {{ Number(state.round.twap_diff_usd) >= 0 ? '+' : '' }}{{ state.round.twap_diff_usd }}
                   </div>
                 </div>
                 <div class="min-w-0">
                   <div class="text-[10px] sm:text-[11px] text-slate-400 truncate">现货</div>
-                  <div class="text-[15px] sm:text-xl font-bold mono text-slate-200 mt-0.5 truncate">${{ state.round.binance_spot || '--' }}</div>
-                  <div class="text-[10px] sm:text-[11px] mono text-slate-400 truncate">基差 {{ state.round.basis_usd >= 0 ? '+' : '' }}{{ state.round.basis_usd }}</div>
+                  <div class="text-[15px] sm:text-xl font-bold mono kpi-val mt-0.5 truncate">${{ state.round.binance_spot || '--' }}</div>
+                  <div class="text-[10px] sm:text-[11px] mono kpi-muted truncate">基差 {{ state.round.basis_usd >= 0 ? '+' : '' }}{{ state.round.basis_usd }}</div>
                 </div>
               </div>
 
@@ -371,24 +389,24 @@
                   </thead>
                   <tbody class="divide-y divide-line/50">
                     <tr>
-                      <td class="py-2 px-2.5 sm:px-3 font-bold text-emerald-400 whitespace-nowrap">UP</td>
-                      <td class="py-2 px-1.5 sm:px-2 text-right text-slate-200 whitespace-nowrap">{{ fmtCents(state.orderbook.UP.best_bid) }} / {{ fmtCents(state.orderbook.UP.best_ask) }}</td>
+                      <td class="py-2 px-2.5 sm:px-3 font-bold kpi-pos whitespace-nowrap">UP</td>
+                      <td class="py-2 px-1.5 sm:px-2 text-right kpi-val whitespace-nowrap">{{ fmtCents(state.orderbook.UP.best_bid) }} / {{ fmtCents(state.orderbook.UP.best_ask) }}</td>
                       <td class="py-2 px-1.5 sm:px-2 text-right whitespace-nowrap">
-                        <span class="text-emerald-400 font-semibold">{{ (state.strategy.pricing.model_up_prob*100).toFixed(1) }}%</span>
-                        <span class="text-[10px] text-slate-500 ml-0.5 sm:ml-1">({{ ((state.strategy.features.bs_up_prob ?? 0.5)*100).toFixed(0) }}%)</span>
+                        <span class="kpi-pos font-semibold">{{ (state.strategy.pricing.model_up_prob*100).toFixed(1) }}%</span>
+                        <span class="text-[10px] kpi-muted ml-0.5 sm:ml-1">({{ ((state.strategy.features.bs_up_prob ?? 0.5)*100).toFixed(0) }}%)</span>
                       </td>
-                      <td class="py-2 px-2.5 sm:px-3 text-right font-semibold whitespace-nowrap" :class="state.strategy.pricing.up_edge >= 0.04 ? 'text-emerald-400' : 'text-slate-400'">
+                      <td class="py-2 px-2.5 sm:px-3 text-right font-semibold whitespace-nowrap" :class="state.strategy.pricing.up_edge >= 0.04 ? 'kpi-pos' : 'kpi-muted'">
                         {{ state.strategy.pricing.up_edge >= 0 ? '+' : '' }}{{ (state.strategy.pricing.up_edge*100).toFixed(1) }}%
                       </td>
                     </tr>
                     <tr>
-                      <td class="py-2 px-2.5 sm:px-3 font-bold text-rose-400 whitespace-nowrap">DOWN</td>
-                      <td class="py-2 px-1.5 sm:px-2 text-right text-slate-200 whitespace-nowrap">{{ fmtCents(state.orderbook.DOWN.best_bid) }} / {{ fmtCents(state.orderbook.DOWN.best_ask) }}</td>
+                      <td class="py-2 px-2.5 sm:px-3 font-bold kpi-neg whitespace-nowrap">DOWN</td>
+                      <td class="py-2 px-1.5 sm:px-2 text-right kpi-val whitespace-nowrap">{{ fmtCents(state.orderbook.DOWN.best_bid) }} / {{ fmtCents(state.orderbook.DOWN.best_ask) }}</td>
                       <td class="py-2 px-1.5 sm:px-2 text-right whitespace-nowrap">
-                        <span class="text-rose-400 font-semibold">{{ (state.strategy.pricing.model_down_prob*100).toFixed(1) }}%</span>
-                        <span class="text-[10px] text-slate-500 ml-0.5 sm:ml-1">({{ ((1 - (state.strategy.features.bs_up_prob ?? 0.5))*100).toFixed(0) }}%)</span>
+                        <span class="kpi-neg font-semibold">{{ (state.strategy.pricing.model_down_prob*100).toFixed(1) }}%</span>
+                        <span class="text-[10px] kpi-muted ml-0.5 sm:ml-1">({{ ((1 - (state.strategy.features.bs_up_prob ?? 0.5))*100).toFixed(0) }}%)</span>
                       </td>
-                      <td class="py-2 px-2.5 sm:px-3 text-right font-semibold whitespace-nowrap" :class="state.strategy.pricing.down_edge >= 0.04 ? 'text-rose-400' : 'text-slate-400'">
+                      <td class="py-2 px-2.5 sm:px-3 text-right font-semibold whitespace-nowrap" :class="state.strategy.pricing.down_edge >= 0.04 ? 'kpi-neg' : 'kpi-muted'">
                         {{ state.strategy.pricing.down_edge >= 0 ? '+' : '' }}{{ (state.strategy.pricing.down_edge*100).toFixed(1) }}%
                       </td>
                     </tr>
@@ -442,38 +460,38 @@
 
             <!-- Consolidated 4-Metric Strategy Strip -->
             <div class="grid grid-cols-2 sm:grid-cols-4 gap-px bg-line/60 rounded-lg border border-line/70 overflow-hidden">
-              <div class="p-2.5 bg-sub/90">
+              <div class="p-2.5 bg-sub">
                 <div class="flex items-center justify-between text-[10px] text-slate-400 gap-1">
                   <span class="truncate">净动量</span>
-                  <span class="mono shrink-0" :class="(state.strategy.features.energy_accum_score || 0) >= 0 ? 'text-emerald-300' : 'text-rose-300'" title="第11维自学习特征：持续能量积累得分">
+                  <span class="mono shrink-0" :class="(state.strategy.features.energy_accum_score || 0) >= 0 ? 'kpi-pos' : 'kpi-neg'" title="第11维自学习特征：持续能量积累得分">
                     蓄{{ (state.strategy.features.energy_accum_score || 0) >= 0 ? '+' : '' }}{{ Number(state.strategy.features.energy_accum_score || 0).toFixed(2) }}
                   </span>
                 </div>
-                <div class="text-base font-bold mono mt-0.5" :class="state.strategy.features.net_power_bps >= 0 ? 'text-emerald-400' : 'text-rose-400'">
+                <div class="text-base font-bold mono mt-0.5" :class="state.strategy.features.net_power_bps >= 0 ? 'kpi-pos' : 'kpi-neg'">
                   {{ state.strategy.features.net_power_bps >= 0 ? '+' : '' }}{{ state.strategy.features.net_power_bps }}
                 </div>
-                <div class="text-[10px] mono text-slate-500 truncate">多{{ state.strategy.features.bull_power_bps }} / 空{{ state.strategy.features.bear_power_bps }}</div>
+                <div class="text-[10px] mono kpi-muted truncate">多{{ state.strategy.features.bull_power_bps }} / 空{{ state.strategy.features.bear_power_bps }}</div>
               </div>
-              <div class="p-2.5 bg-sub/90">
+              <div class="p-2.5 bg-sub">
                 <div class="flex items-center justify-between text-[10px] text-slate-400 gap-1">
                   <span class="truncate">永续流</span>
-                  <span class="mono text-slate-500 shrink-0" title="近10分钟滚动自适应3秒净成交门槛">门${{ Math.round(((state.feeds.binance_perp && state.feeds.binance_perp.adaptive_cvd_3s_min_usd) || 65000)/1000) }}k</span>
+                  <span class="mono kpi-muted shrink-0" title="近10分钟滚动自适应3秒净成交门槛">门${{ Math.round(((state.feeds.binance_perp && state.feeds.binance_perp.adaptive_cvd_3s_min_usd) || 65000)/1000) }}k</span>
                 </div>
-                <div class="text-base font-bold mono mt-0.5" :class="(state.strategy.features.orderflow_score || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'">
+                <div class="text-base font-bold mono mt-0.5" :class="(state.strategy.features.orderflow_score || 0) >= 0 ? 'kpi-pos' : 'kpi-neg'">
                   {{ (state.strategy.features.orderflow_score || 0) >= 0 ? '+' : '' }}{{ state.strategy.features.orderflow_score ?? 0 }}
                 </div>
-                <div class="text-[10px] mono text-slate-500 truncate">
+                <div class="text-[10px] mono kpi-muted truncate">
                   CVD {{ (((state.feeds.binance_perp && state.feeds.binance_perp.cvd_3s_imbalance) || 0)*100).toFixed(0) }}% · 量{{ Number((state.feeds.binance_perp && state.feeds.binance_perp.vol_3s_rel) || 0).toFixed(1) }}x
                 </div>
               </div>
-              <div class="p-2.5 bg-sub/90">
+              <div class="p-2.5 bg-sub">
                 <div class="text-[10px] text-slate-400 truncate">价差 Z</div>
-                <div class="text-base font-bold mono mt-0.5" :class="(state.strategy.features.moneyness_z || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'">
+                <div class="text-base font-bold mono mt-0.5" :class="(state.strategy.features.moneyness_z || 0) >= 0 ? 'kpi-pos' : 'kpi-neg'">
                   {{ (state.strategy.features.moneyness_z || 0) >= 0 ? '+' : '' }}{{ state.strategy.features.moneyness_z ?? 0 }}σ
                 </div>
-                <div class="text-[10px] mono text-slate-500 truncate">余波 ±{{ state.strategy.features.sigma_rem_bps ?? '--' }} · 敏{{ ((state.strategy.features.delta_10bps || 0)*100).toFixed(0) }}¢</div>
+                <div class="text-[10px] mono kpi-muted truncate">余波 ±{{ state.strategy.features.sigma_rem_bps ?? '--' }} · 敏{{ ((state.strategy.features.delta_10bps || 0)*100).toFixed(0) }}¢</div>
               </div>
-              <div class="p-2.5 bg-sub/90">
+              <div class="p-2.5 bg-sub">
                 <div class="flex items-center justify-between text-[10px] text-slate-400 gap-1">
                   <span class="truncate">IV / RV</span>
                   <span class="px-1 rounded text-[9px] shrink-0" :class="ivStateBadge(state.strategy.features.iv_state)">{{ fmtIvState(state.strategy.features.iv_state) }}</span>
@@ -481,7 +499,7 @@
                 <div class="text-base font-bold mono mt-0.5" :class="ivRatioColor(state.strategy.features.iv_state)">
                   {{ Number(state.strategy.features.iv_rv_ratio || 1).toFixed(2) }}x
                 </div>
-                <div class="text-[10px] mono text-slate-500 truncate">IV {{ state.strategy.features.iv_1s_bps ?? '--' }} / RV {{ state.strategy.features.sigma_1s_bps ?? '--' }}</div>
+                <div class="text-[10px] mono kpi-muted truncate">IV {{ state.strategy.features.iv_1s_bps ?? '--' }} / RV {{ state.strategy.features.sigma_1s_bps ?? '--' }}</div>
               </div>
             </div>
 
@@ -502,33 +520,33 @@
 
             <!-- Consolidated Performance Grid -->
             <div class="grid grid-cols-2 sm:grid-cols-3 gap-px bg-line/60 rounded-lg border border-line/70 overflow-hidden">
-              <div class="p-2.5 bg-sub/90">
+              <div class="p-2.5 bg-sub">
                 <div class="text-[10px] text-slate-400">余额</div>
-                <div class="text-sm sm:text-base font-bold mono text-white mt-0.5 truncate">${{ Number(state.paper_balance).toFixed(2) }}</div>
+                <div class="text-sm sm:text-base font-bold mono kpi-val mt-0.5 truncate">${{ Number(state.paper_balance).toFixed(2) }}</div>
               </div>
-              <div class="p-2.5 bg-sub/90">
+              <div class="p-2.5 bg-sub">
                 <div class="text-[10px] text-slate-400">累计盈亏</div>
-                <div class="text-sm sm:text-base font-bold mono mt-0.5 truncate" :class="state.stats.total_pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'">
+                <div class="text-sm sm:text-base font-bold mono mt-0.5 truncate" :class="state.stats.total_pnl >= 0 ? 'kpi-pos' : 'kpi-neg'">
                   {{ state.stats.total_pnl >= 0 ? '+' : '' }}${{ state.stats.total_pnl }}
                 </div>
               </div>
-              <div class="p-2.5 bg-sub/90">
+              <div class="p-2.5 bg-sub">
                 <div class="text-[10px] text-slate-400 truncate">胜率 ({{ state.stats.wins }}/{{ state.stats.losses }})</div>
-                <div class="text-sm sm:text-base font-bold mono text-white mt-0.5">{{ state.stats.win_rate }}%</div>
+                <div class="text-sm sm:text-base font-bold mono kpi-val mt-0.5">{{ state.stats.win_rate }}%</div>
               </div>
-              <div class="p-2.5 bg-sub/90">
+              <div class="p-2.5 bg-sub">
                 <div class="text-[10px] text-slate-400">盈亏比</div>
-                <div class="text-sm font-bold mono text-indigo-300 mt-0.5">{{ state.stats.profit_factor }}</div>
+                <div class="text-sm font-bold mono kpi-accent mt-0.5">{{ state.stats.profit_factor }}</div>
               </div>
-              <div class="p-2.5 bg-sub/90">
+              <div class="p-2.5 bg-sub">
                 <div class="text-[10px] text-slate-400">回撤</div>
-                <div class="text-sm font-bold mono text-rose-400 mt-0.5">-${{ state.stats.max_drawdown }}</div>
+                <div class="text-sm font-bold mono kpi-neg mt-0.5">-${{ state.stats.max_drawdown }}</div>
               </div>
-              <div class="p-2.5 bg-sub/90">
+              <div class="p-2.5 bg-sub">
                 <div class="text-[10px] text-slate-400">24H 盈亏</div>
-                <div class="text-sm font-bold mono mt-0.5 truncate" :class="state.stats.daily_pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'">
+                <div class="text-sm font-bold mono mt-0.5 truncate" :class="state.stats.daily_pnl >= 0 ? 'kpi-pos' : 'kpi-neg'">
                   {{ state.stats.daily_pnl >= 0 ? '+' : '' }}{{ state.stats.daily_pnl }}
-                  <span class="text-[10px] font-normal text-slate-500">费${{ state.stats.total_fees }}</span>
+                  <span class="text-[10px] font-normal kpi-fee">费${{ state.stats.total_fees }}</span>
                 </div>
               </div>
             </div>
@@ -1500,10 +1518,10 @@ createApp({
       return 'bg-slate-800 text-slate-400';
     }
     function ivRatioColor(s) {
-      if (s === 'IV_OVERPRICED') return 'text-emerald-400';
-      if (s === 'IV_UNDERPRICED') return 'text-rose-400';
-      if (s === 'DRIFT_INVERSION') return 'text-amber-300';
-      return 'text-white';
+      if (s === 'IV_OVERPRICED') return 'kpi-pos';
+      if (s === 'IV_UNDERPRICED') return 'kpi-neg';
+      if (s === 'DRIFT_INVERSION') return 'kpi-warn';
+      return 'kpi-val';
     }
     function statusColor(s, exitReason) {
       if (s === 'CLOSED') return (exitReason && exitReason.includes('止损')) ? 'text-rose-400' : 'text-emerald-400';
