@@ -152,8 +152,22 @@ class PolymarketClobFeed:
         if best_bid > 0.0 and best_ask > 0.0 and best_bid > best_ask:
             return
 
-        mid = round((best_bid + best_ask) * 0.5, 4) if (best_bid > 0.0 and best_ask > 0.0) else (best_bid or best_ask or 0.5)
-        spread = round(max(0.0, best_ask - best_bid), 4) if (best_bid > 0.0 and best_ask > 0.0) else 0.0
+        bk = self.books[side]
+        if best_bid > 0.0 and best_ask > 0.0:
+            mid = round((best_bid + best_ask) * 0.5, 4)
+            spread = round(max(0.0, best_ask - best_bid), 4)
+        elif best_bid > 0.0:
+            mid = round(best_bid, 4)
+            spread = 0.0
+        elif best_ask > 0.0:
+            mid = round(best_ask, 4)
+            spread = 0.0
+        elif bk["last_trade"] > 0.0:
+            mid = round(bk["last_trade"], 4)
+            spread = 0.0
+        else:
+            mid = bk["mid"]
+            spread = 0.0
 
         top_bid_vol = sum(sz for _, sz in top_bids[:3])
         top_ask_vol = sum(sz for _, sz in top_asks[:3])
@@ -241,15 +255,30 @@ class PolymarketClobFeed:
 
             bb = ch.get("best_bid")
             ba = ch.get("best_ask")
-            if bb not in (None, "") and ba not in (None, ""):
+            if bb not in (None, "") or ba not in (None, ""):
                 try:
-                    b_f, a_f = float(bb), float(ba)
-                    if 0.0 < b_f < 1.0 and 0.0 < a_f < 1.0 and b_f <= a_f:
+                    b_f = float(bb) if bb not in (None, "") else 0.0
+                    a_f = float(ba) if ba not in (None, "") else 0.0
+                    valid_range = (0.0 <= b_f < 1.0) and (0.0 <= a_f < 1.0)
+                    not_crossed = (b_f == 0.0 or a_f == 0.0 or b_f <= a_f)
+                    if valid_range and not_crossed:
                         bk = self.books[s2]
                         bk["best_bid"] = round(b_f, 4)
                         bk["best_ask"] = round(a_f, 4)
-                        bk["mid"] = round((b_f + a_f) * 0.5, 4)
-                        bk["spread"] = round(max(0.0, a_f - b_f), 4)
+                        if b_f > 0.0 and a_f > 0.0:
+                            bk["mid"] = round((b_f + a_f) * 0.5, 4)
+                            bk["spread"] = round(max(0.0, a_f - b_f), 4)
+                        elif b_f > 0.0:
+                            bk["mid"] = round(b_f, 4)
+                            bk["spread"] = 0.0
+                        elif a_f > 0.0:
+                            bk["mid"] = round(a_f, 4)
+                            bk["spread"] = 0.0
+                        elif bk["last_trade"] > 0.0:
+                            bk["mid"] = round(bk["last_trade"], 4)
+                            bk["spread"] = 0.0
+                        else:
+                            bk["spread"] = 0.0
                         bk["updated_at"] = now
                         direct_updated_sides.add(s2)
                 except (TypeError, ValueError):
@@ -401,15 +430,30 @@ class PolymarketClobFeed:
                             elif ev_type == "best_bid_ask":
                                 bb = ev.get("best_bid")
                                 ba = ev.get("best_ask")
-                                if bb not in (None, "") and ba not in (None, ""):
+                                if bb not in (None, "") or ba not in (None, ""):
                                     try:
-                                        b_f, a_f = float(bb), float(ba)
-                                        if 0.0 < b_f < 1.0 and 0.0 < a_f < 1.0 and b_f <= a_f:
+                                        b_f = float(bb) if bb not in (None, "") else 0.0
+                                        a_f = float(ba) if ba not in (None, "") else 0.0
+                                        valid_range = (0.0 <= b_f < 1.0) and (0.0 <= a_f < 1.0)
+                                        not_crossed = (b_f == 0.0 or a_f == 0.0 or b_f <= a_f)
+                                        if valid_range and not_crossed:
                                             bk = self.books[side]
                                             bk["best_bid"] = round(b_f, 4)
                                             bk["best_ask"] = round(a_f, 4)
-                                            bk["mid"] = round((b_f + a_f) * 0.5, 4)
-                                            bk["spread"] = round(max(0.0, a_f - b_f), 4)
+                                            if b_f > 0.0 and a_f > 0.0:
+                                                bk["mid"] = round((b_f + a_f) * 0.5, 4)
+                                                bk["spread"] = round(max(0.0, a_f - b_f), 4)
+                                            elif b_f > 0.0:
+                                                bk["mid"] = round(b_f, 4)
+                                                bk["spread"] = 0.0
+                                            elif a_f > 0.0:
+                                                bk["mid"] = round(a_f, 4)
+                                                bk["spread"] = 0.0
+                                            elif bk["last_trade"] > 0.0:
+                                                bk["mid"] = round(bk["last_trade"], 4)
+                                                bk["spread"] = 0.0
+                                            else:
+                                                bk["spread"] = 0.0
                                             bk["updated_at"] = now
                                             self._emit_update(side, "price_change")
                                     except (TypeError, ValueError):

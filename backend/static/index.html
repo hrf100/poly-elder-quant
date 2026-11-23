@@ -98,7 +98,7 @@
           <div class="flex items-center gap-2 min-w-0">
             <span class="w-2 h-2 rounded-full shrink-0" :class="wsConnected ? 'bg-emerald-400 shadow-[0_0_6px_#10b981]' : 'bg-rose-500'"></span>
             <span class="font-bold text-[15px] text-white tracking-tight truncate">PolyQuant <span class="text-indigo-400">5m</span></span>
-            <span class="px-1.5 py-0.5 rounded bg-card border border-line2 text-[10px] mono text-slate-300 shrink-0">v34</span>
+            <span class="px-1.5 py-0.5 rounded bg-card border border-line2 text-[10px] mono text-slate-300 shrink-0">v35</span>
           </div>
           <nav class="hidden sm:flex items-center gap-1 bg-card p-0.5 rounded-lg border border-line">
             <button v-for="t in tabs" :key="t.id" @click="switchTab(t.id)"
@@ -1133,6 +1133,22 @@ createApp({
     let equityChart = null;
     let equityChartInited = false;
     let lastEquitySig = '';
+    let chartsConnected = false;
+    let latestTimeBySec = {};
+
+    function syncRoundCharts() {
+      if (liveChart && bookChart && rightChartMode.value === 'book') {
+        if (!chartsConnected) {
+          liveChart.group = 'roundSyncGroup';
+          bookChart.group = 'roundSyncGroup';
+          echarts.connect('roundSyncGroup');
+          chartsConnected = true;
+        }
+      } else if (chartsConnected) {
+        echarts.disconnect('roundSyncGroup');
+        chartsConnected = false;
+      }
+    }
     let ws = null;
 
     function notify(msg, type = 'ok') {
@@ -1186,10 +1202,11 @@ createApp({
       const narrow = window.innerWidth < 640;
 
       const secOf = (p, i) => (p.s != null ? Number(p.s) : i);
-      const timeBySec = {};
+      const tMap = {};
       for (let i = 0; i < pts.length; i++) {
-        timeBySec[secOf(pts[i], i)] = pts[i].t || '';
+        tMap[secOf(pts[i], i)] = pts[i].t || '';
       }
+      latestTimeBySec = tMap;
 
       // 1. Left BTC Price + 60s TWAP + Strike + Momentum Chart (fixed 0s -> 300s round stage)
       const dom = document.getElementById('liveChart');
@@ -1197,13 +1214,20 @@ createApp({
         if (!liveChart) {
           liveChart = echarts.init(dom, null, { renderer: 'canvas' });
           liveChartInited = false;
+          chartsConnected = false;
         }
         const sSpot = pts.map((p, i) => [secOf(p, i), p.oracle_spot ?? p.twap60]);
         const sTwap = pts.map((p, i) => [secOf(p, i), p.twap60]);
         const strikeVal = (state.round && state.round.price_to_beat && state.round.price_to_beat !== '--')
           ? Number(state.round.price_to_beat)
           : (pts.length && pts[pts.length - 1].strike ? Number(pts[pts.length - 1].strike) : null);
-        const sStrike = (strikeVal && Number.isFinite(strikeVal)) ? [[0, strikeVal], [300, strikeVal]] : [];
+        const hasStrike = (strikeVal && Number.isFinite(strikeVal));
+        const sStrike = hasStrike ? pts.map((p, i) => [secOf(p, i), strikeVal]) : [];
+        const strikeMarkLines = hasStrike ? [{
+          yAxis: strikeVal,
+          lineStyle: { color: '#fbbf24', type: 'dashed', width: 1.2 },
+          label: { show: false }
+        }] : [];
         const sMom = pts.map((p, i) => [secOf(p, i), p.net_power_bps]);
 
         if (!liveChartInited) {
@@ -1213,13 +1237,14 @@ createApp({
             tooltip: {
               trigger: 'axis',
               confine: true,
+              axisPointer: { type: 'line', snap: true, lineStyle: { color: '#94a3b8', width: 1, type: 'dashed' } },
               backgroundColor: '#0E1420',
               borderColor: '#334155',
               textStyle: { color: '#f8fafc', fontSize: 11 },
               formatter: (params) => {
                 if (!params || !params.length) return '';
                 const sec = Math.round(params[0].value[0]);
-                const tStr = timeBySec[sec] ? ` · ${timeBySec[sec]}` : '';
+                const tStr = latestTimeBySec[sec] ? ` · ${latestTimeBySec[sec]}` : '';
                 let out = `<div style="color:#94a3b8;margin-bottom:3px">第 ${sec}s${tStr}</div>`;
                 for (const p of params) {
                   if (p.value == null || p.value[1] == null) continue;
@@ -1236,6 +1261,7 @@ createApp({
               type: 'value', min: 0, max: 300, interval: 60,
               axisLine: { lineStyle: { color: '#1E293B' } },
               splitLine: { lineStyle: { color: '#111927' } },
+              axisPointer: { type: 'line', snap: true, lineStyle: { color: '#94a3b8', width: 1, type: 'dashed' } },
               axisLabel: { color: '#94a3b8', fontSize: narrow ? 9 : 10, formatter: '{value}s' }
             },
             yAxis: [
@@ -1244,7 +1270,9 @@ createApp({
             ],
             series: [
               {
-                name: '现价', type: 'line', showSymbol: false, data: sSpot, lineStyle: { color: '#38bdf8', width: 1.6 },
+                name: '现价', type: 'line', showSymbol: false, connectNulls: true, data: sSpot,
+                itemStyle: { color: '#38bdf8' },
+                lineStyle: { color: '#38bdf8', width: 1.6 },
                 markArea: {
                   silent: true,
                   itemStyle: { color: 'rgba(245,158,11,0.055)' },
@@ -1252,29 +1280,56 @@ createApp({
                   data: [[{ name: 'TWAP 锁定', xAxis: 240 }, { xAxis: 300 }]]
                 }
               },
-              { name: '60s均价', type: 'line', showSymbol: false, data: sTwap, lineStyle: { color: '#f59e0b', width: 1.8 } },
-              { name: '目标价', type: 'line', showSymbol: false, data: sStrike, lineStyle: { color: '#fbbf24', type: 'dashed', width: 1.2 } },
-              { name: '动量', type: 'bar', yAxisIndex: 1, barMaxWidth: 3, data: sMom, itemStyle: { color: (p) => (p.value && p.value[1] >= 0) ? 'rgba(16,185,129,0.32)' : 'rgba(244,63,94,0.32)' } },
+              {
+                name: '60s均价', type: 'line', showSymbol: false, connectNulls: true, data: sTwap,
+                itemStyle: { color: '#f59e0b' },
+                lineStyle: { color: '#f59e0b', width: 1.8 }
+              },
+              {
+                name: '目标价', type: 'line', showSymbol: false, connectNulls: true, data: sStrike,
+                itemStyle: { color: '#fbbf24' },
+                lineStyle: { color: '#fbbf24', type: 'dashed', width: 1.2 },
+                markLine: { silent: true, symbol: ['none', 'none'], data: strikeMarkLines }
+              },
+              {
+                name: '动量', type: 'bar', yAxisIndex: 1, barMaxWidth: 3, data: sMom,
+                itemStyle: { color: (p) => (p.value && p.value[1] >= 0) ? 'rgba(16,185,129,0.38)' : 'rgba(244,63,94,0.38)' }
+              },
             ]
           });
           liveChartInited = true;
         } else {
           liveChart.setOption({
-            series: [{ data: sSpot }, { data: sTwap }, { data: sStrike }, { data: sMom }]
+            series: [
+              { data: sSpot },
+              { data: sTwap },
+              { data: sStrike, markLine: { data: strikeMarkLines } },
+              { data: sMom }
+            ]
           }, false, true);
         }
       }
 
-      // 2. Right Polymarket Round-Scoped 0s -> 300s Orderbook Chart (4 clean layers)
+      // 2. Right Polymarket Round-Scoped 0s -> 300s Orderbook Chart (4 clean layers + continuous carry-forward)
       if (rightChartMode.value === 'book') {
         const bdom = document.getElementById('bookChart');
         if (bdom) {
           if (!bookChart) {
             bookChart = echarts.init(bdom, null, { renderer: 'canvas' });
             bookChartInited = false;
+            chartsConnected = false;
           }
-          const sUp = pts.map((p, i) => [secOf(p, i), p.pm_up_mid != null ? Number(p.pm_up_mid) : null]);
-          const sDn = pts.map((p, i) => [secOf(p, i), p.pm_down_mid != null ? Number(p.pm_down_mid) : null]);
+          // Carry-forward safeguard on frontend too so orderbook lines never break during zero-liquidity moments
+          let lastUp = null;
+          let lastDn = null;
+          const sUp = pts.map((p, i) => {
+            if (p.pm_up_mid != null) lastUp = Number(p.pm_up_mid);
+            return [secOf(p, i), lastUp];
+          });
+          const sDn = pts.map((p, i) => {
+            if (p.pm_down_mid != null) lastDn = Number(p.pm_down_mid);
+            return [secOf(p, i), lastDn];
+          });
           const sModelUp = pts.map((p, i) => [secOf(p, i), p.model_up_prob != null ? Number(p.model_up_prob) : null]);
 
           // Dynamic AI max entry price ceiling (e.g. 75c) + active position entry cost line
@@ -1298,7 +1353,7 @@ createApp({
             });
           }
 
-          // Trade event markers (Entry / Arb Lock / TP / SL)
+          // Trade event markers (Entry / Arb Lock / TP / SL) - silent so hover never hijacks dual-chart axis sync
           const evPoints = roundEvents.map(ev => {
             const color = ev.kind === 'EXIT_SL' ? '#f43f5e'
               : (ev.kind === 'EXIT_TP' ? '#fbbf24'
@@ -1333,13 +1388,14 @@ createApp({
               tooltip: {
                 trigger: 'axis',
                 confine: true,
+                axisPointer: { type: 'line', snap: true, lineStyle: { color: '#94a3b8', width: 1, type: 'dashed' } },
                 backgroundColor: '#0E1420',
                 borderColor: '#334155',
                 textStyle: { color: '#f8fafc', fontSize: 11 },
                 formatter: (params) => {
                   if (!params || !params.length) return '';
                   const sec = Math.round(params[0].value[0]);
-                  const tStr = timeBySec[sec] ? ` · ${timeBySec[sec]}` : '';
+                  const tStr = latestTimeBySec[sec] ? ` · ${latestTimeBySec[sec]}` : '';
                   let out = `<div style="color:#94a3b8;margin-bottom:3px">第 ${sec}s${tStr}</div>`;
                   for (const p of params) {
                     if (p.seriesName === '本场操作' || p.value == null || p.value[1] == null) continue;
@@ -1355,6 +1411,7 @@ createApp({
                 type: 'value', min: 0, max: 300, interval: 60,
                 axisLine: { lineStyle: { color: '#1E293B' } },
                 splitLine: { lineStyle: { color: '#111927' } },
+                axisPointer: { type: 'line', snap: true, lineStyle: { color: '#94a3b8', width: 1, type: 'dashed' } },
                 axisLabel: { color: '#94a3b8', fontSize: narrow ? 9 : 10, formatter: '{value}s' }
               },
               yAxis: {
@@ -1364,7 +1421,8 @@ createApp({
               },
               series: [
                 {
-                  name: 'UP', type: 'line', showSymbol: false, connectNulls: false, data: sUp,
+                  name: 'UP', type: 'line', showSymbol: false, connectNulls: true, data: sUp,
+                  itemStyle: { color: '#10b981' },
                   lineStyle: { color: '#10b981', width: 2 },
                   areaStyle: { color: 'rgba(16,185,129,0.08)' },
                   endLabel: {
@@ -1380,7 +1438,8 @@ createApp({
                   markLine: { silent: true, symbol: ['none', 'none'], data: markLines }
                 },
                 {
-                  name: 'DOWN', type: 'line', showSymbol: false, connectNulls: false, data: sDn,
+                  name: 'DOWN', type: 'line', showSymbol: false, connectNulls: true, data: sDn,
+                  itemStyle: { color: '#f43f5e' },
                   lineStyle: { color: '#f43f5e', width: 2 },
                   areaStyle: { color: 'rgba(244,63,94,0.08)' },
                   endLabel: {
@@ -1389,11 +1448,12 @@ createApp({
                   }
                 },
                 {
-                  name: '模型UP', type: 'line', showSymbol: false, connectNulls: false, data: sModelUp,
+                  name: '模型UP', type: 'line', showSymbol: false, connectNulls: true, data: sModelUp,
+                  itemStyle: { color: '#38bdf8' },
                   lineStyle: { color: '#38bdf8', width: 1.2, type: 'dashed', opacity: 0.85 }
                 },
                 {
-                  name: '本场操作', type: 'scatter', z: 10, data: evPoints
+                  name: '本场操作', type: 'scatter', silent: true, tooltip: { show: false }, z: 10, data: evPoints
                 }
               ]
             });
@@ -1410,6 +1470,9 @@ createApp({
           }
         }
       }
+
+      // Link liveChart <-> bookChart hover crosshair & tooltip synchronously
+      syncRoundCharts();
     }
 
     function setRightChartMode(m) {
@@ -1418,7 +1481,9 @@ createApp({
         if (m === 'book') {
           updateLiveChart();
           if (bookChart) bookChart.resize();
+          syncRoundCharts();
         } else {
+          syncRoundCharts();
           if (equityChart) equityChart.resize();
           loadTradingData(true);
         }

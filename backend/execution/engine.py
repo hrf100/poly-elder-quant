@@ -558,8 +558,9 @@ class QuantTradingEngine:
 
                 if spot > 0 and self.current_window_ts > 0:
                     oracle_spot = round(spot - self.basis_ema, 2)
-                    up_live = (up_book["best_bid"] > 0 and up_book["best_ask"] > 0)
-                    dn_live = (dn_book["best_bid"] > 0 and dn_book["best_ask"] > 0)
+                    prev_pt = self.live_chart_buffer[-1] if self.live_chart_buffer else None
+                    pm_up_c = self._resolve_chart_book_cents(up_book, dn_book, prev_pt.get("pm_up_mid") if prev_pt else None)
+                    pm_dn_c = self._resolve_chart_book_cents(dn_book, up_book, prev_pt.get("pm_down_mid") if prev_pt else None)
                     sec_s = max(0, min(300, int(elapsed_sec)))
                     pt = {
                         "s": sec_s,
@@ -570,8 +571,8 @@ class QuantTradingEngine:
                         "strike": round(strike, 2) if strike > 0 else None,
                         "net_power_bps": snap["net_power_bps"],
                         "model_up_prob": round(model_up_p * 100, 1),
-                        "pm_up_mid": round(up_book["mid"] * 100, 1) if up_live else None,
-                        "pm_down_mid": round(dn_book["mid"] * 100, 1) if dn_live else None,
+                        "pm_up_mid": pm_up_c,
+                        "pm_down_mid": pm_dn_c,
                     }
                     if self.live_chart_buffer and self.live_chart_buffer[-1].get("s") == sec_s:
                         self.live_chart_buffer[-1] = pt
@@ -1257,6 +1258,32 @@ class QuantTradingEngine:
         if ps["has_pending"]:
             return "挂单等待成交"
         return "本场空仓"
+
+    @staticmethod
+    def _resolve_chart_book_cents(book: dict, opp_book: dict, prev_val: Optional[float]) -> Optional[float]:
+        """Resolve continuous 0-100c chart quote even when one side or both sides of the book are empty."""
+        bb = float(book.get("best_bid") or 0.0)
+        ba = float(book.get("best_ask") or 0.0)
+        if bb > 0.0 and ba > 0.0:
+            return round((bb + ba) * 50.0, 1)
+        if bb > 0.0:
+            return round(bb * 100.0, 1)
+        if ba > 0.0:
+            return round(ba * 100.0, 1)
+        lt = float(book.get("last_trade") or 0.0)
+        if 0.0 < lt < 1.0:
+            return round(lt * 100.0, 1)
+        obb = float(opp_book.get("best_bid") or 0.0)
+        oba = float(opp_book.get("best_ask") or 0.0)
+        if obb > 0.0 and oba > 0.0:
+            return round((1.0 - 0.5 * (obb + oba)) * 100.0, 1)
+        if obb > 0.0:
+            return round((1.0 - obb) * 100.0, 1)
+        if oba > 0.0:
+            return round((1.0 - oba) * 100.0, 1)
+        if prev_val is not None:
+            return float(prev_val)
+        return None
 
     def _build_round_chart_events(self, mode: str) -> list[dict]:
         """Build lightweight in-round order/fill/exit markers for the 0-300s orderbook chart."""
