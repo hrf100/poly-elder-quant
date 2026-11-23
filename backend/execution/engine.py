@@ -1336,6 +1336,13 @@ class QuantTradingEngine:
         twap_diff = None
         if self.current_ptb is not None and self.oracle.latest_twap60 > 0:
             twap_diff = str((self.oracle.latest_twap60 - self.current_ptb).quantize(Decimal("0.01")))
+        best_spot = self.cex.get_best_spot()
+        oracle_spot_val = round(best_spot - self.basis_ema, 2) if best_spot > 0 else (
+            round(self.oracle.latest_spot_float, 2) if self.oracle.latest_spot_float > 0 else 0.0
+        )
+        spot_twap_diff = None
+        if oracle_spot_val > 0 and self.oracle.latest_twap60 > 0:
+            spot_twap_diff = f"{(oracle_spot_val - float(self.oracle.latest_twap60)):.2f}"
 
         return {
             "ts": now,
@@ -1361,7 +1368,9 @@ class QuantTradingEngine:
                 "oracle_source": self.oracle.active_oracle_source,
                 "twap60": twap_str,
                 "twap_diff_usd": twap_diff,
-                "binance_spot": round(self.cex.get_best_spot(), 2),
+                "oracle_spot": oracle_spot_val,
+                "spot_twap_diff_usd": spot_twap_diff,
+                "binance_spot": round(best_spot, 2),
                 "basis_usd": round(self.basis_ema, 2),
                 "last_settled": self.last_settled_round,
                 "pending_settlement_count": len(self.pending_settlements),

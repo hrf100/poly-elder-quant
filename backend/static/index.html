@@ -98,7 +98,7 @@
           <div class="flex items-center gap-2 min-w-0">
             <span class="w-2 h-2 rounded-full shrink-0" :class="wsConnected ? 'bg-emerald-400 shadow-[0_0_6px_#10b981]' : 'bg-rose-500'"></span>
             <span class="font-bold text-[15px] text-white tracking-tight truncate">PolyQuant <span class="text-indigo-400">5m</span></span>
-            <span class="px-1.5 py-0.5 rounded bg-card border border-line2 text-[10px] mono text-slate-300 shrink-0">v35</span>
+            <span class="px-1.5 py-0.5 rounded bg-card border border-line2 text-[10px] mono text-slate-300 shrink-0">v36</span>
           </div>
           <nav class="hidden sm:flex items-center gap-1 bg-card p-0.5 rounded-lg border border-line">
             <button v-for="t in tabs" :key="t.id" @click="switchTab(t.id)"
@@ -309,6 +309,13 @@
                   <span class="text-slate-400">目标价 <strong class="text-amber-400">${{ state.round.price_to_beat }}</strong></span>
                   <span class="text-slate-400">现货 <strong class="text-sky-300">${{ state.round.binance_spot || '--' }}</strong></span>
                   <span class="text-slate-400">基差 <strong class="text-slate-200">{{ state.round.basis_usd >= 0 ? '+' : '' }}{{ state.round.basis_usd }}</strong></span>
+                  <span class="text-slate-400" title="现价(对齐) − 60s均价；正值将拉升均价，负值将拉低均价">现-均
+                    <strong v-if="state.round.spot_twap_diff_usd !== null && state.round.spot_twap_diff_usd !== undefined"
+                            :class="Number(state.round.spot_twap_diff_usd) >= 0 ? 'text-emerald-400' : 'text-rose-400'">
+                      {{ Number(state.round.spot_twap_diff_usd) >= 0 ? '+' : '' }}{{ state.round.spot_twap_diff_usd }}
+                    </strong>
+                    <strong v-else class="text-slate-500">--</strong>
+                  </span>
                 </div>
               </div>
               <div class="text-right shrink-0">
@@ -1098,7 +1105,7 @@ createApp({
       mode: 'PAPER',
       system: { cpu_percent: 0, cpu_cores: 1, mem_percent: 0, mem_used_mb: 0, mem_total_mb: 0, proc_rss_mb: 0, swap_percent: 0, disk_free_gb: 0, net_rx_kbps: 0, net_tx_kbps: 0, net_cum_rx_mb: 0, net_cum_tx_mb: 0, uptime_sec: 0 },
       feeds: { binance: {}, binance_perp: {}, rtds: {}, polybolt: {}, gamma: {}, clob: {}, active_oracle: 'NONE', geo_check: { clock_drift_ms: 0, country: '...', blocked: false } },
-      round: { slug: '', elapsed_sec: 0, remaining_sec: 300, price_to_beat: '--', ptb_source: '同步中', twap60: '--', twap_diff_usd: null, binance_spot: 0, basis_usd: 0, last_settled: null, pending_settlement_count: 0 },
+      round: { slug: '', elapsed_sec: 0, remaining_sec: 300, price_to_beat: '--', ptb_source: '同步中', twap60: '--', twap_diff_usd: null, oracle_spot: 0, spot_twap_diff_usd: null, binance_spot: 0, basis_usd: 0, last_settled: null, pending_settlement_count: 0 },
       orderbook: { UP: { best_bid: 0, best_ask: 0, mid: 0.5 }, DOWN: { best_bid: 0, best_ask: 0, mid: 0.5 } },
       strategy: { features: {}, pricing: { model_up_prob: 0.5, model_down_prob: 0.5, up_edge: 0, down_edge: 0, signal: 'NONE', last_decision: '', last_decision_ts: 0, last_block_reason: '', last_block_ts: 0, round_block_count: 0, round_block_reasons: {} }, cooldown_remaining: 0, consecutive_losses: 0, circuit_breaker_remaining: 0, round_position: '本场空仓' },
       paper_balance: 1000,
@@ -1246,11 +1253,21 @@ createApp({
                 const sec = Math.round(params[0].value[0]);
                 const tStr = latestTimeBySec[sec] ? ` · ${latestTimeBySec[sec]}` : '';
                 let out = `<div style="color:#94a3b8;margin-bottom:3px">第 ${sec}s${tStr}</div>`;
+                let spotVal = null;
+                let twapVal = null;
                 for (const p of params) {
                   if (p.value == null || p.value[1] == null) continue;
                   const v = Number(p.value[1]);
+                  if (p.seriesName === '现价') spotVal = v;
+                  else if (p.seriesName === '60s均价') twapVal = v;
                   const fmt = p.seriesName === '动量' ? `${v >= 0 ? '+' : ''}${v.toFixed(2)} bps` : `$${v.toFixed(2)}`;
                   out += `<div>${p.marker}${p.seriesName}: <b>${fmt}</b></div>`;
+                  if (p.seriesName === '60s均价' && spotVal !== null && twapVal !== null) {
+                    const diff = spotVal - twapVal;
+                    const c = diff >= 0 ? '#34d399' : '#fb7185';
+                    const sign = diff >= 0 ? '+' : '-';
+                    out += `<div><span style="display:inline-block;margin-right:5px;border-radius:50%;width:8px;height:8px;background:${c}"></span>现-均: <b style="color:${c}">${sign}$${Math.abs(diff).toFixed(2)}</b></div>`;
+                  }
                 }
                 return out;
               }
