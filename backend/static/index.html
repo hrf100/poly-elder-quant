@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN" class="dark">
 <head>
   <meta charset="UTF-8" />
@@ -101,7 +101,7 @@
           <div class="flex items-center gap-2 min-w-0">
             <span class="w-2 h-2 rounded-full shrink-0" :class="wsConnected ? 'bg-emerald-400 shadow-[0_0_6px_#10b981]' : 'bg-rose-500'"></span>
             <span class="font-bold text-[15px] text-white tracking-tight truncate">PolyQuant <span class="text-indigo-400">5m</span></span>
-            <span class="px-1.5 py-0.5 rounded bg-card border border-line2 text-[10px] mono text-slate-300 shrink-0">v48</span>
+            <span class="px-1.5 py-0.5 rounded bg-card border border-line2 text-[10px] mono text-slate-300 shrink-0">v49.1</span>
           </div>
           <nav class="hidden sm:flex items-center gap-1 bg-card p-0.5 rounded-lg border border-line">
             <button v-for="t in tabs" :key="t.id" @click="switchTab(t.id)"
@@ -613,9 +613,9 @@
                   <div class="text-slate-400 font-sans text-[9px]">入场窗口</div>
                   <div class="text-white font-bold text-[11px]">35~240s</div>
                 </div>
-                <div class="bg-card px-2 py-1 rounded border border-line text-center" title="固定仓位无凯利放大 · 零Maker挂单 · 零锁利 · 零止损">
-                  <div class="text-slate-400 font-sans text-[9px]">执行方式</div>
-                  <div class="text-amber-400 font-bold text-[11px]">纯FAK</div>
+                <div class="bg-card px-2 py-1 rounded border border-line text-center" title="按优势动态滑点封顶：6~8.9%限+1¢ / 9~11.9%限+2¢ / ≥12%限+3¢，且硬保证封顶后仍留≥4.5%净优势且≤58¢">
+                  <div class="text-slate-400 font-sans text-[9px]">FAK动态顶</div>
+                  <div class="text-amber-400 font-bold text-[11px]">+1~3¢</div>
                 </div>
               </div>
 
@@ -2183,7 +2183,7 @@ createApp({
         const blob = await resp.blob();
         const disp = resp.headers.get('Content-Disposition') || '';
         const m = disp.match(/filename="?([^"]+)"?/i);
-        const fname = (m && m[1]) ? m[1] : 'poly_strategy_v48.json';
+        const fname = (m && m[1]) ? m[1] : 'poly_strategy_v49.json';
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;

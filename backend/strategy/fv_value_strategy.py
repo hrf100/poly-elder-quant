@@ -50,10 +50,12 @@ class FVDiscountLeaderStrategy:
     ELAPSED_MAX_SEC = 240
     ASK_MIN = 0.35
     ASK_MAX = 0.56
+    ASK_HARD_CAP = 0.58           # Never chase above 58c even on huge edge
     MAX_SPREAD = 0.03
     MAX_PARITY_ERR = 0.04
     MIN_NET_EDGE = 0.06
     MIN_RESIDUAL_EDGE_ON_CAP = 0.045
+    MAX_DYNAMIC_SLIP_C = 0.03     # Hard ceiling on dynamic slippage allowance (+3c)
 
     EXIT_MODES = ("TIME_TWAP_MOAT", "DYNAMIC_EV", "HOLD_EXPIRY")
 
@@ -178,15 +180,14 @@ class FVDiscountLeaderStrategy:
                 near_miss_reason = f"{side}卖一{ask*100:.0f}¢不在折价甜区(35~56¢)"
                 continue
 
-            # Profit-preserving FAK max_price ceiling: at most +1 tick AND never erodes edge below +4.5%
-            max_px_by_edge = p_fair - fee_ps - self.MIN_RESIDUAL_EDGE_ON_CAP
-            max_fak_px = round(min(self.ASK_MAX + 0.01, ask + 0.01, max_px_by_edge), 2)
-            max_fak_px = max(round(ask, 2), max_fak_px)
+            # v49 Edge-based dynamic FAK slippage cap (+1c / +2c / +3c by net edge, >=4.5% residual edge, <=58c)
+            max_fak_px, allowed_slip = self.compute_dynamic_fak_cap(ask, p_fair, taker_fee_rate)
 
             cand = {
                 "side": side,
                 "limit_price": round(ask, 4),
                 "max_fak_price": max_fak_px,
+                "allowed_slip": allowed_slip,
                 "fair_prob": p_fair,
                 "signed_z": signed_z,
                 "net_edge": net_edge,
@@ -217,6 +218,48 @@ class FVDiscountLeaderStrategy:
         return best_cand, None
 
     @classmethod
+    def compute_dynamic_fak_cap(
+        cls,
+        ask: float,
+        fair_prob: float,
+        taker_fee_rate: float = 0.05,
+    ) -> tuple[float, float]:
+        """
+        v49 Edge-Based Dynamic FAK Slippage Cap:
+        - Base net_edge = fair_prob - (ask + fee(ask)):
+            * <  9.0% : allow up to +1c
+            * 9~11.9% : allow up to +2c
+            * >= 12.0%: allow up to +3c
+        - Evaluates EXACT Polymarket quadratic fee at each candidate tick `ask + step`,
+          strictly enforcing BOTH `cand <= ASK_HARD_CAP (0.58)` AND
+          `fair_prob - (cand + fee(cand)) >= MIN_RESIDUAL_EDGE_ON_CAP (4.5%)`.
+        Returns (max_fak_price, allowed_slip).
+        """
+        base_ask = round(max(0.01, min(0.99, float(ask))), 2)
+        base_edge = float(fair_prob) - (base_ask + taker_fee_per_share(base_ask, taker_fee_rate))
+        if base_edge >= 0.12:
+            tier_slip_ticks = 3
+        elif base_edge >= 0.09:
+            tier_slip_ticks = 2
+        elif base_edge >= cls.MIN_RESIDUAL_EDGE_ON_CAP + 0.01:
+            tier_slip_ticks = 1
+        else:
+            tier_slip_ticks = 0
+
+        max_ticks = min(tier_slip_ticks, int(round(cls.MAX_DYNAMIC_SLIP_C * 100)))
+        best_px = base_ask
+        for step in range(1, max_ticks + 1):
+            cand = round(base_ask + step * 0.01, 2)
+            if cand > cls.ASK_HARD_CAP + 1e-9:
+                break
+            rem_edge = float(fair_prob) - (cand + taker_fee_per_share(cand, taker_fee_rate))
+            if rem_edge + 1e-6 >= cls.MIN_RESIDUAL_EDGE_ON_CAP:
+                best_px = cand
+            else:
+                break
+        return best_px, round(best_px - base_ask, 2)
+
+    @classmethod
     def revalidate_on_fresh_book(
         cls,
         side: str,
@@ -224,25 +267,26 @@ class FVDiscountLeaderStrategy:
         signed_z: float,
         fresh_book: dict,
         taker_fee_rate: float = 0.05,
+        initial_max_cap: Optional[float] = None,
     ) -> tuple[bool, str, float, float]:
-        """Re-verify exact Discounted Leader edge on fresh REST book right before firing real money."""
+        """Re-verify Discounted Leader edge & dynamic cap on fresh REST book right before firing real money."""
         bid = float(fresh_book.get("best_bid") or 0.0)
         ask = float(fresh_book.get("best_ask") or 0.0)
         if bid <= 0.01 or ask <= 0.01 or ask < bid:
             return False, "REST盘口无效", 0.0, 0.0
         if (ask - bid) > cls.MAX_SPREAD + 1e-6:
             return False, f"REST点差扩大({(ask-bid)*100:.1f}¢)", 0.0, 0.0
-        if ask < cls.ASK_MIN or ask > cls.ASK_MAX + 0.01:
-            return False, f"REST卖一{ask*100:.0f}¢已脱离35-57¢折价区", 0.0, 0.0
+        hard_hi = min(cls.ASK_HARD_CAP, float(initial_max_cap)) if initial_max_cap is not None else cls.ASK_HARD_CAP
+        if ask < cls.ASK_MIN or ask > hard_hi + 1e-6:
+            return False, f"REST卖一{ask*100:.0f}¢超出动态封顶({hard_hi*100:.0f}¢)", 0.0, 0.0
         fee_ps = taker_fee_per_share(ask, taker_fee_rate)
         net_edge = fair_prob - (ask + fee_ps)
         if net_edge < cls.MIN_RESIDUAL_EDGE_ON_CAP or signed_z < 0.0:
             return False, f"REST重算净优势不足({net_edge*100:+.1f}% < +4.5%)", 0.0, 0.0
-        max_fak_px = max(
-            round(ask, 2),
-            round(min(cls.ASK_MAX + 0.01, ask + 0.01, fair_prob - fee_ps - cls.MIN_RESIDUAL_EDGE_ON_CAP), 2),
-        )
-        return True, "", round(ask, 4), max_fak_px
+        dyn_cap, _ = cls.compute_dynamic_fak_cap(ask, fair_prob, taker_fee_rate)
+        if initial_max_cap is not None:
+            dyn_cap = max(round(ask, 2), min(dyn_cap, round(float(initial_max_cap), 2)))
+        return True, "", round(ask, 4), dyn_cap
 
     @classmethod
     def calculate_fixed_stake(

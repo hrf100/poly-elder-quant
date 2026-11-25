@@ -557,7 +557,7 @@ async def export_strategy(
     bundle = export_strategy_bundle(engine, include_model=include_model, name=name)
     raw = json.dumps(bundle, ensure_ascii=False, indent=2).encode("utf-8")
     ts_tag = time.strftime("%Y%m%d_%H%M%S", time.gmtime())
-    fname = f"poly_strategy_v48_{ts_tag}.json"
+    fname = f"poly_strategy_v49_{ts_tag}.json"
     return StreamingResponse(
         io.BytesIO(raw),
         media_type="application/json; charset=utf-8",

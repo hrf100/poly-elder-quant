@@ -49,6 +49,7 @@ class PaperExecutionEngine:
         extra_note: str = "",
         exit_arm: str = "HOLD_EXPIRY",
         entry_strategy: str = "momentum_breakout",
+        max_price_override: float | None = None,
     ) -> dict | None:
         now = time.time()
         tag = f" | {extra_note}" if extra_note else ""
@@ -87,11 +88,16 @@ class PaperExecutionEngine:
             "recon_status": "PENDING" if mode == "PAPER" else None,
             "recon_diff": None,
             "recon_note": None,
-            "notes": f"盘口 {book_bid:.2f}/{book_ask:.2f} | 离场:{exit_arm} | {'吃单' if arm.get('is_taker') else '挂单'}{tag}",
+            "notes": (
+                f"盘口 {book_bid:.2f}/{book_ask:.2f}"
+                + (f" | 封顶{float(max_price_override):.2f}" if max_price_override is not None else "")
+                + f" | 离场:{exit_arm} | {'吃单' if arm.get('is_taker') else '挂单'}{tag}"
+            ),
             "_active_after": now + 0.30,
             "_expire_at": now + 0.30 + float(arm["ttl_ms"]) / 1000.0,
             "_is_taker": bool(arm.get("is_taker", False)),
             "_arrived_checked": False,
+            "_max_accept_price": round(float(max_price_override), 4) if max_price_override is not None else None,
         }
         # Atomic cross-process & in-process single-slot guard: refuse duplicate primary/arb order in same round!
         arb_ids = ("ARB_LOCK_MAKER", "ARB_LOCK_TAKER")
@@ -307,14 +313,23 @@ class PaperExecutionEngine:
                 if best_ask > 0:
                     is_fv_pess = (str(o.get("arm_id") or "") == "FV_LEADER_FAK")
                     pess_slip = 0.01 if is_fv_pess else 0.0
-                    max_accept = min(round(o["limit_price"] + (0.01 if is_fv_pess else 0.02), 4), 0.88)
-                    if best_ask <= max_accept:
-                        filled_px = min(0.98, round(best_ask + pess_slip, 4))
+                    custom_cap = o.get("_max_accept_price")
+                    if custom_cap is not None and float(custom_cap) > 0:
+                        max_accept = min(round(float(custom_cap), 4), 0.88)
+                    else:
+                        max_accept = min(round(o["limit_price"] + (0.01 if is_fv_pess else 0.02), 4), 0.88)
+                    if best_ask <= max_accept + 1e-6:
+                        # Pessimistic +1c fill slippage, never exceeding the FAK order's own max_price cap
+                        filled_px = min(max_accept, round(best_ask + pess_slip, 4)) if is_fv_pess else best_ask
                         charge_taker_fee = True
-                        fill_reason = f"悲观FAK吃单(+1¢滑)@{filled_px:.2f}" if is_fv_pess else f"市价吃卖一@{best_ask:.2f}"
+                        fill_reason = (
+                            f"动态FAK吃单(顶{max_accept:.2f})@{filled_px:.2f}"
+                            if is_fv_pess
+                            else f"市价吃卖一@{best_ask:.2f}"
+                        )
                     else:
                         o["status"] = "CANCELLED"
-                        o["notes"] = (o["notes"] or "") + f" | 300ms滑点超限(卖一已升至{best_ask:.2f})"
+                        o["notes"] = (o["notes"] or "") + f" | 300ms滑点超限(卖一{best_ask:.2f}>封顶{max_accept:.2f})"
                         if o.get("mode") == "PAPER":
                             cb = round(self.get_balance(), 4)
                             o["bal_after_settle"] = cb

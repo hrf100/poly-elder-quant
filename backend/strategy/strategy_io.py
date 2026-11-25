@@ -13,7 +13,7 @@ from backend.config import HARD_LIMITS, MODELS_DIR
 from backend.strategy.offline_trainer import load_model_artifact
 
 STRATEGY_SCHEMA = "poly-elder-quant-strategy/v1"
-APP_VERSION = "v48"
+APP_VERSION = "v49"
 MAX_ARTIFACT_BYTES = 10 * 1024 * 1024  # 10 MB hard cap
 BACKUP_KV_KEY = "strategy_pre_import_backup"
 

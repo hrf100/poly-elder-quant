@@ -1592,6 +1592,7 @@ class QuantTradingEngine:
                 model_prob, book["mid"], model_prob - limit_px, snap["net_power_bps"], elapsed_sec, snap["regime"],
                 mode="SHADOW", book_bid=book["best_bid"], book_ask=book["best_ask"],
                 extra_note=extra_note, exit_arm=exit_arm, entry_strategy=entry_strategy,
+                max_price_override=max_price_override,
             )
             if submitted is None:
                 return
@@ -1607,6 +1608,7 @@ class QuantTradingEngine:
                 model_prob, book["mid"], model_prob - limit_px, snap["net_power_bps"], elapsed_sec, snap["regime"],
                 mode="PAPER", book_bid=book["best_bid"], book_ask=book["best_ask"],
                 extra_note=extra_note, exit_arm=exit_arm, entry_strategy=entry_strategy,
+                max_price_override=max_price_override,
             )
             if submitted is None:
                 self._set_decision("本场已有活跃主仓/挂单，原子锁已拦截重复下单", sticky=False, now=now)
@@ -1632,7 +1634,8 @@ class QuantTradingEngine:
                 self._record_block(f"实盘硬熔断拦截: {safe_msg}", "单场熔断", now=now)
                 return
 
-            ok_bk, bk_msg, fresh_bk = await self.clob.verify_fresh_book_rest(sig, px_tick, is_buy=True, is_taker=is_tk)
+            rest_check_px = max_price_override if (is_tk and max_price_override is not None) else px_tick
+            ok_bk, bk_msg, fresh_bk = await self.clob.verify_fresh_book_rest(sig, rest_check_px, is_buy=True, is_taker=is_tk)
             if not ok_bk:
                 self._record_block(f"实盘盘口复核拦截: {bk_msg}", "盘口复核", now=now)
                 return
@@ -1641,7 +1644,8 @@ class QuantTradingEngine:
                     _, _, z_c = self.fv_strategy.compute_fair_probs(snap, elapsed_sec)
                     sz_c = z_c if sig == "UP" else -z_c
                     ok_fv, fv_msg, fv_ask, fv_cap = self.fv_strategy.revalidate_on_fresh_book(
-                        sig, model_prob, sz_c, fresh_bk, self.current_taker_fee_rate
+                        sig, model_prob, sz_c, fresh_bk, self.current_taker_fee_rate,
+                        initial_max_cap=max_price_override,
                     )
                     if not ok_fv:
                         self._record_block(f"实盘FV复核拦截: {fv_msg}", "盘口复核", now=now)
