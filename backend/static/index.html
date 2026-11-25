@@ -85,6 +85,9 @@
   <!-- Main Workspace -->
   <div v-else class="min-h-screen flex flex-col bg-canvas">
     <!-- Default password alert -->
+    <div v-if="state.system && state.system.duplicate_instance" class="bg-rose-600/20 border-b border-rose-500/50 text-rose-200 text-xs py-2 px-4 text-center font-medium">
+      检测到服务器同时运行了多个进程，当前实例已自动锁定为只读保护模式（防止同场重复下单），请执行 <code class="mono bg-black/40 px-1.5 py-0.5 rounded">pkill -f "uvicorn backend.main:app" &amp;&amp; systemctl restart poly-elder-quant</code>
+    </div>
     <div v-if="isDefaultPassword" class="bg-amber-950/80 border-b border-amber-500/40 px-3 sm:px-4 py-1.5 text-xs text-amber-200 flex items-center justify-between gap-2">
       <span class="truncate">请修改默认密码</span>
       <button @click="switchTab('settings')" class="px-2.5 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 text-amber-100 shrink-0">修改</button>
@@ -98,7 +101,7 @@
           <div class="flex items-center gap-2 min-w-0">
             <span class="w-2 h-2 rounded-full shrink-0" :class="wsConnected ? 'bg-emerald-400 shadow-[0_0_6px_#10b981]' : 'bg-rose-500'"></span>
             <span class="font-bold text-[15px] text-white tracking-tight truncate">PolyQuant <span class="text-indigo-400">5m</span></span>
-            <span class="px-1.5 py-0.5 rounded bg-card border border-line2 text-[10px] mono text-slate-300 shrink-0">v36</span>
+            <span class="px-1.5 py-0.5 rounded bg-card border border-line2 text-[10px] mono text-slate-300 shrink-0">v48</span>
           </div>
           <nav class="hidden sm:flex items-center gap-1 bg-card p-0.5 rounded-lg border border-line">
             <button v-for="t in tabs" :key="t.id" @click="switchTab(t.id)"
@@ -147,11 +150,19 @@
             </button>
           </div>
 
-          <!-- Mobile Mode Switch in Top Row -->
-          <div class="flex md:hidden items-center bg-card p-0.5 rounded-lg border border-line text-[11px]">
-            <button @click="setMode('PAPER')" class="px-2 py-1 rounded-md font-medium transition" :class="state.mode === 'PAPER' ? 'bg-emerald-600 text-white' : 'text-slate-400'">模拟</button>
-            <button @click="setMode('PAUSED')" class="px-2 py-1 rounded-md font-medium transition" :class="state.mode === 'PAUSED' ? 'bg-amber-600 text-white' : 'text-slate-400'">暂停</button>
-            <button @click="setMode('LIVE')" class="px-2 py-1 rounded-md font-medium transition" :class="state.mode === 'LIVE' ? 'bg-rose-600 text-white' : 'text-rose-400/80'">实盘</button>
+          <!-- Mobile Account Switch + Independent Pause Toggle -->
+          <div class="flex md:hidden items-center gap-1.5 text-[11px]">
+            <div class="flex items-center bg-card p-0.5 rounded-lg border border-line">
+              <button @click="setMode('PAPER')" class="px-2 py-1 rounded-md font-medium transition" :class="state.mode === 'PAPER' ? 'bg-emerald-600 text-white' : 'text-slate-400'">模拟</button>
+              <button @click="setMode('LIVE')" class="px-2 py-1 rounded-md font-medium transition" :class="state.mode === 'LIVE' ? 'bg-rose-600 text-white' : 'text-rose-400/80'">实盘</button>
+            </div>
+            <button @click="togglePause()" type="button"
+                    class="px-2 py-1 rounded-lg border font-semibold transition inline-flex items-center gap-1 whitespace-nowrap"
+                    :class="state.paused ? 'bg-amber-500/20 border-amber-500/50 text-amber-300' : 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'"
+                    :title="state.paused ? '已暂停下单，点击恢复自动交易' : '自动交易运行中，点击暂停'">
+              <span class="w-1.5 h-1.5 rounded-full" :class="state.paused ? 'bg-amber-400' : 'bg-emerald-400 animate-pulse'"></span>
+              <span>{{ state.paused ? '已暂停' : '运行' }}</span>
+            </button>
           </div>
 
           <button @click="doLogout" class="px-2 py-1 rounded-md text-xs text-slate-400 hover:text-rose-300 hover:bg-card border border-transparent hover:border-line transition whitespace-nowrap">退出</button>
@@ -269,7 +280,11 @@
         <!-- Right: Balance + Mode Switch + Breaker + Geo/Uptime -->
         <div class="flex items-center gap-2.5 shrink-0">
           <div class="flex items-center gap-2 text-[11px] mono text-slate-400">
-            <span>余额 <strong class="text-emerald-400">${{ Number(state.paper_balance).toFixed(2) }}</strong></span>
+            <span v-if="state.mode === 'LIVE'" :title="liveBalanceTooltip">
+              可用 <strong :class="livePusdBalance >= 5.20 ? 'text-emerald-400' : 'text-amber-400'">${{ livePusdBalance.toFixed(2) }}</strong>
+              <span class="text-[10px] text-slate-400 ml-1">· 净值 <strong class="text-rose-300">${{ liveTotalEquity.toFixed(2) }}</strong></span>
+            </span>
+            <span v-else>余额 <strong class="text-emerald-400">${{ Number(state.paper_balance).toFixed(2) }}</strong></span>
             <span class="text-slate-700">|</span>
             <span :title="'盘余 ' + state.system.disk_free_gb + 'G'">
               <strong :class="state.feeds.geo_check.blocked ? 'text-rose-400' : 'text-emerald-400'">{{ state.feeds.geo_check.country }}</strong>
@@ -277,11 +292,18 @@
             </span>
           </div>
 
-          <div class="flex items-center bg-sub p-0.5 rounded-lg border border-line2 text-[11px]">
+          <div class="flex items-center bg-sub p-0.5 rounded-lg border border-line2 text-[11px]" title="切换查看/运行的账户（暂停时可自由切换查看模拟与实盘）">
             <button @click="setMode('PAPER')" class="px-2.5 py-0.5 rounded-md font-medium transition" :class="state.mode === 'PAPER' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-slate-100'">模拟</button>
-            <button @click="setMode('PAUSED')" class="px-2.5 py-0.5 rounded-md font-medium transition" :class="state.mode === 'PAUSED' ? 'bg-amber-600 text-white' : 'text-slate-400 hover:text-slate-100'">暂停</button>
             <button @click="setMode('LIVE')" class="px-2.5 py-0.5 rounded-md font-medium transition" :class="state.mode === 'LIVE' ? 'bg-rose-600 text-white' : 'text-rose-400/80 hover:text-rose-200'">实盘</button>
           </div>
+
+          <button @click="togglePause()" type="button"
+                  class="px-2.5 py-1 rounded-lg border text-[11px] font-semibold transition inline-flex items-center gap-1.5 whitespace-nowrap"
+                  :class="state.paused ? 'bg-amber-500/20 hover:bg-amber-500/30 border-amber-500/50 text-amber-300' : (state.mode === 'LIVE' ? 'bg-rose-500/15 hover:bg-rose-500/25 border-rose-500/45 text-rose-200' : 'bg-emerald-500/15 hover:bg-emerald-500/25 border-emerald-500/40 text-emerald-300')"
+                  :title="state.paused ? '当前已暂停自动下单（可自由切换查看模拟/实盘），点击恢复交易' : '自动交易运行中，点击立即暂停下单'">
+            <span class="w-1.5 h-1.5 rounded-full" :class="state.paused ? 'bg-amber-400' : (state.mode === 'LIVE' ? 'bg-rose-400 animate-pulse' : 'bg-emerald-400 animate-pulse')"></span>
+            <span>{{ state.paused ? '已暂停 · 点击启动' : '运行中 · 暂停' }}</span>
+          </button>
 
           <button v-if="state.strategy.circuit_breaker_remaining > 0" @click="resetBreaker"
                   class="px-2.5 py-1 rounded-md text-[11px] font-semibold bg-amber-600 hover:bg-amber-500 text-white">
@@ -365,9 +387,12 @@
                       class="px-2 py-0.5 rounded bg-emerald-500/12 border border-emerald-500/35 text-[11px] text-emerald-300 font-medium truncate max-w-[175px]">
                   {{ state.strategy.round_position || '本场空仓' }}
                 </span>
-                <span v-else
-                      class="px-2 py-0.5 rounded bg-indigo-500/15 border border-indigo-500/35 text-[11px] text-indigo-300 font-medium">
-                  {{ state.mode === 'LIVE' ? '实盘账户' : '模拟账户' }}
+                <span v-else class="inline-flex items-center gap-1.5">
+                  <span class="px-2 py-0.5 rounded text-[11px] font-medium border"
+                        :class="state.mode === 'LIVE' ? 'bg-rose-500/15 border-rose-500/35 text-rose-300' : 'bg-indigo-500/15 border-indigo-500/35 text-indigo-300'">
+                    {{ state.mode === 'LIVE' ? '实盘账户' : '模拟账户' }}
+                  </span>
+                  <span v-if="state.paused" class="px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/40 text-[10px] text-amber-300 font-medium">已暂停</span>
                 </span>
               </div>
               <div class="flex items-center gap-1.5">
@@ -411,9 +436,9 @@
 
             <!-- Context Strip B: 收益曲线模式 -> 余额 / 净盈亏 / 胜率 / 回撤 4 格摘要条 -->
             <div v-else class="grid grid-cols-2 sm:grid-cols-4 gap-2 mono text-xs">
-              <div class="px-2.5 py-1.5 rounded-lg bg-sub border border-line flex items-center justify-between gap-1">
-                <span class="text-[11px] text-slate-400 font-sans">余额</span>
-                <strong class="text-white">${{ Number(state.paper_balance).toFixed(2) }}</strong>
+              <div class="px-2.5 py-1.5 rounded-lg bg-sub border border-line flex items-center justify-between gap-1" :title="state.mode === 'LIVE' ? liveBalanceTooltip : '模拟账户余额'">
+                <span class="text-[11px] text-slate-400 font-sans">{{ state.mode === 'LIVE' ? '实盘可用' : '余额' }}</span>
+                <strong :class="state.mode === 'LIVE' ? (livePusdBalance >= 5.20 ? 'text-emerald-400' : 'text-amber-400') : 'text-white'">${{ (state.mode === 'LIVE' ? livePusdBalance : activeBalance).toFixed(2) }}</strong>
               </div>
               <div class="px-2.5 py-1.5 rounded-lg bg-sub border border-line flex items-center justify-between gap-1">
                 <span class="text-[11px] text-slate-400 font-sans">净盈亏</span>
@@ -543,11 +568,8 @@
           <div class="lg:col-span-5 term-card p-3 sm:p-3.5 flex flex-col justify-between gap-2.5 text-xs">
             <div class="flex items-center justify-between gap-2">
               <div class="flex items-center gap-2 min-w-0">
-                <h3 class="text-sm font-bold text-white shrink-0">风控底线</h3>
-                <span class="px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/35 text-[10px] text-emerald-300 font-medium shrink-0">自动进化</span>
-                <span class="hidden sm:inline-block px-1.5 py-0.5 rounded bg-sky-500/15 border border-sky-500/35 text-[10px] text-sky-300 font-medium truncate" title="当前最优离场模式">
-                  {{ fmtExitArm(state.learning.best_exit_arm) }}
-                </span>
+                <h3 class="text-sm font-bold text-white shrink-0">风控与策略</h3>
+                <span class="px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/35 text-[10px] text-emerald-300 font-medium shrink-0">FV贴水领跑·纯FAK</span>
               </div>
               <button @click="saveRisk" class="px-3 py-1 rounded-lg bg-[#4f46e5] hover:bg-indigo-500 text-white text-[11px] font-semibold shrink-0 transition">保存</button>
             </div>
@@ -559,35 +581,50 @@
               <label class="text-slate-300 text-[10px] font-medium">连亏(场)<input v-model.number="riskForm.consecutive_loss_limit" type="number" min="2" max="20" class="w-full mt-0.5 px-2 py-1 rounded-md bg-sub border border-line2 mono text-xs text-white" /></label>
             </div>
 
-            <!-- Compact Auto-Evolved Parameters + Sub-Strategies Box -->
+            <!-- v47 Clean-Slate Verified FV Strategy Controls (F0 Entry + G3/G2/G0 Exit) -->
+            <div class="flex flex-wrap items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-sub border border-line text-[11px]">
+              <label class="inline-flex items-center gap-1.5 text-slate-200 min-w-0">
+                <span class="text-slate-400 shrink-0">离场</span>
+                <select v-model="riskForm.fv_exit_mode" @change="saveRisk"
+                        class="px-2 py-0.5 rounded bg-card border border-line2 text-[11px] text-emerald-300 font-medium">
+                  <option value="TIME_TWAP_MOAT">时间+TWAP护城河 (G3推荐)</option>
+                  <option value="DYNAMIC_EV">纯EV溢价·低回撤 (G2)</option>
+                  <option value="HOLD_EXPIRY">持有到期 (G0)</option>
+                </select>
+              </label>
+              <label class="inline-flex items-center gap-1.5 text-slate-300 cursor-pointer select-none" title="默认2秒连续确认+REST盘口复核；勾选后需连续5秒持稳才入场（低频保守，建议搭配持有到期）">
+                <input v-model="riskForm.fv_strict_5s_confirm" @change="onToggleStrict5s" type="checkbox" class="rounded" />
+                <span>严格5s确认</span>
+              </label>
+            </div>
+
+            <!-- Locked Physical Strategy Parameters (Zero Self-Corrupting Auto-Drift) -->
             <div class="term-box p-2 space-y-2">
-              <div class="grid grid-cols-4 gap-1.5 mono text-[10px]" v-if="state.learning.auto_params">
-                <div class="bg-card px-2 py-1 rounded border border-line text-center">
-                  <div class="text-slate-400 font-sans text-[9px]">基准优势</div>
-                  <div class="text-emerald-400 font-bold text-[11px]">{{ (Number(state.learning.auto_params.min_edge || 0.042)*100).toFixed(1) }}%</div>
+              <div class="grid grid-cols-4 gap-1.5 mono text-[10px]">
+                <div class="bg-card px-2 py-1 rounded border border-line text-center" title="扣除5%二次吃单费后仍需≥+6.0%肥尾t4公允优势">
+                  <div class="text-slate-400 font-sans text-[9px]">含费净优势</div>
+                  <div class="text-emerald-400 font-bold text-[11px]">≥6.0%</div>
                 </div>
-                <div class="bg-card px-2 py-1 rounded border border-line text-center">
-                  <div class="text-slate-400 font-sans text-[9px]">最高赔率</div>
-                  <div class="text-sky-400 font-bold text-[11px]">{{ Math.round(Number(state.learning.auto_params.max_entry_price || 0.75)*100) }}¢</div>
+                <div class="bg-card px-2 py-1 rounded border border-line text-center" title="仅买已领先目标价(Z≥0)且被恐慌砸入甜区的领跑方">
+                  <div class="text-slate-400 font-sans text-[9px]">折价甜区</div>
+                  <div class="text-sky-400 font-bold text-[11px]">35~56¢</div>
                 </div>
-                <div class="bg-card px-2 py-1 rounded border border-line text-center">
-                  <div class="text-slate-400 font-sans text-[9px]">止盈空间</div>
-                  <div class="text-white font-bold text-[11px]">{{ Math.round(Number(state.learning.auto_params.prop_tp_ratio || 0.48)*100) }}%</div>
+                <div class="bg-card px-2 py-1 rounded border border-line text-center" title="避开前35s噪声与最后60s负期望尾盘区">
+                  <div class="text-slate-400 font-sans text-[9px]">入场窗口</div>
+                  <div class="text-white font-bold text-[11px]">35~240s</div>
                 </div>
-                <div class="bg-card px-2 py-1 rounded border border-line text-center">
-                  <div class="text-slate-400 font-sans text-[9px]">锁利上限</div>
-                  <div class="text-amber-400 font-bold text-[11px]">{{ Number(state.learning.auto_params.arb_max_combined_price || 0.95).toFixed(2) }}</div>
+                <div class="bg-card px-2 py-1 rounded border border-line text-center" title="固定仓位无凯利放大 · 零Maker挂单 · 零锁利 · 零止损">
+                  <div class="text-slate-400 font-sans text-[9px]">执行方式</div>
+                  <div class="text-amber-400 font-bold text-[11px]">纯FAK</div>
                 </div>
               </div>
 
-              <div class="grid grid-cols-2 gap-1.5 text-[10px]" v-if="state.learning.sub_strategies">
-                <div v-for="(st, key) in state.learning.sub_strategies" :key="key"
-                     class="px-2 py-1 rounded bg-card border border-line flex items-center justify-between gap-1">
-                  <span class="text-slate-200 truncate">{{ fmtSubStrat(key) }}</span>
-                  <span class="font-semibold shrink-0" :class="st.status === 'ACTIVE' ? 'text-emerald-400' : 'text-amber-400'">
-                    {{ st.status === 'ACTIVE' ? '● 运行' : '◐ 影子' }}
-                  </span>
-                </div>
+              <div class="px-2 py-1 rounded bg-card border border-line text-[10px] text-slate-300 flex items-center justify-between gap-2">
+                <span class="truncate">
+                  <span class="text-emerald-400 font-semibold">● 已锁定</span>
+                  零动量幻觉 · 零Maker滞留 · 零止损 · 模拟盘±1¢悲观撮合
+                </span>
+                <span class="text-sky-300 font-mono shrink-0">{{ fmtFvExitShort(riskForm.fv_exit_mode) }}</span>
               </div>
             </div>
           </div>
@@ -597,34 +634,49 @@
         <div class="term-card p-3.5 sm:p-4">
           <div class="flex flex-wrap items-start justify-between gap-2.5 mb-3">
             <div>
-              <div class="flex items-center gap-2.5">
-                <h3 class="text-sm font-bold text-white">交易记录</h3>
+              <div class="flex flex-wrap items-center gap-2">
+                <h3 class="text-sm font-bold text-white">{{ orderFilter === 'LIVE' ? '实盘独立账本' : (orderFilter === 'SHADOW' ? '影子学习记录' : '模拟独立账本') }}</h3>
+                <span v-if="orderFilter === 'PAPER' && ledgerAudit && ledgerAudit.mode === 'PAPER'"
+                      class="px-1.5 py-0.5 rounded text-[10px] mono border"
+                      :class="ledgerAudit.ledger_ok ? 'bg-emerald-500/12 border-emerald-500/35 text-emerald-300' : 'bg-rose-500/15 border-rose-500/40 text-rose-300'"
+                      :title="`初始 $${ledgerAudit.initial_balance} + 盈亏 $${ledgerAudit.stats.total_pnl} = 应有 $${ledgerAudit.expected_balance} vs 当前 $${ledgerAudit.current_balance}`">
+                  {{ ledgerAudit.ledger_ok ? '✓ 账目平衡' : ('✗ 账差 ' + (ledgerAudit.ledger_diff >= 0 ? '+' : '') + ledgerAudit.ledger_diff) }}
+                </span>
+                <span v-if="orderFilter === 'LIVE' && ledgerAudit && ledgerAudit.mode === 'LIVE'"
+                      class="px-1.5 py-0.5 rounded text-[10px] mono border"
+                      :class="ledgerAudit.recon_mismatch > 0 ? 'bg-rose-500/15 border-rose-500/40 text-rose-300' : (ledgerAudit.confirming > 0 ? 'bg-amber-500/15 border-amber-500/40 text-amber-300' : 'bg-emerald-500/12 border-emerald-500/35 text-emerald-300')">
+                  核对: 吻合{{ ledgerAudit.recon_ok }} · 异常{{ ledgerAudit.recon_mismatch }}<span v-if="ledgerAudit.confirming > 0"> · 确权{{ ledgerAudit.confirming }}</span>
+                </span>
                 <label class="flex items-center gap-1.5 text-[11px] text-slate-400 cursor-pointer">
                   <input v-model="hideCancelled" type="checkbox" class="rounded bg-sub border-line2" />
                   <span>去撤单</span>
                 </label>
               </div>
-              <!-- Inline Performance Summary Strip -->
+              <!-- Strict Per-Account Independent Performance Summary Strip -->
               <div class="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-[11px] mono text-slate-400">
-                <span>余额 <strong class="text-white">${{ Number(state.paper_balance).toFixed(2) }}</strong></span>
-                <span>胜率 <strong class="text-white">{{ state.stats.win_rate }}%</strong> ({{ state.stats.wins }}/{{ state.stats.losses }})</span>
-                <span>净盈亏 <strong :class="state.stats.total_pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'">{{ state.stats.total_pnl >= 0 ? '+' : '' }}${{ state.stats.total_pnl }}</strong></span>
-                <span>盈亏比 <strong class="text-sky-400">{{ state.stats.profit_factor }}</strong></span>
-                <span>回撤 <strong class="text-rose-400">-${{ state.stats.max_drawdown }}</strong></span>
-                <span>24H <strong :class="state.stats.daily_pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'">{{ state.stats.daily_pnl >= 0 ? '+' : '' }}{{ state.stats.daily_pnl }}</strong></span>
+                <span v-if="orderFilter === 'LIVE'" :title="liveBalanceTooltip">实盘可用 <strong :class="livePusdBalance >= 5.20 ? 'text-emerald-400' : 'text-amber-400'">${{ livePusdBalance.toFixed(2) }}</strong> <span class="text-slate-500">· 净值 ${{ liveTotalEquity.toFixed(2) }}</span></span>
+                <span v-else-if="orderFilter === 'PAPER'">模拟余额 <strong class="text-white">${{ Number(state.paper_balance).toFixed(2) }}</strong></span>
+                <span>胜率 <strong class="text-white">{{ ledgerStats.win_rate }}%</strong> ({{ ledgerStats.wins }}/{{ ledgerStats.losses }})</span>
+                <span>净盈亏 <strong :class="ledgerStats.total_pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'">{{ ledgerStats.total_pnl >= 0 ? '+' : '' }}${{ ledgerStats.total_pnl }}</strong></span>
+                <span>盈亏比 <strong class="text-sky-400">{{ ledgerStats.profit_factor }}</strong></span>
+                <span>回撤 <strong class="text-rose-400">-${{ ledgerStats.max_drawdown }}</strong></span>
+                <span>24H <strong :class="ledgerStats.daily_pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'">{{ ledgerStats.daily_pnl >= 0 ? '+' : '' }}{{ ledgerStats.daily_pnl }}</strong></span>
+                <span v-if="ledgerStats.total_fees > 0">手续费 <strong class="text-slate-300">${{ Number(ledgerStats.total_fees).toFixed(2) }}</strong></span>
               </div>
             </div>
 
             <div class="flex flex-wrap items-center gap-1.5 text-[11px]">
               <div class="flex gap-0.5 bg-sub p-0.5 rounded-lg border border-line2">
-                <button v-for="m in [{k:'ALL',l:'全部'},{k:'PAPER',l:'模拟'},{k:'LIVE',l:'实盘'},{k:'SHADOW',l:'影子'}]" :key="m.k"
+                <button v-for="m in [{k:'PAPER',l:'模拟账本'},{k:'LIVE',l:'实盘账本'},{k:'SHADOW',l:'影子'}]" :key="m.k"
                         @click="orderFilter = m.k; loadTradingData(false)"
-                        class="px-2 py-0.5 rounded-md transition whitespace-nowrap"
-                        :class="orderFilter === m.k ? 'bg-[#1E293B] text-white font-semibold' : 'text-slate-400 hover:text-slate-100'">{{ m.l }}</button>
+                        class="px-2.5 py-0.5 rounded-md transition whitespace-nowrap"
+                        :class="orderFilter === m.k ? (m.k === 'LIVE' ? 'bg-rose-600/80 text-white font-semibold' : 'bg-[#1E293B] text-white font-semibold') : 'text-slate-400 hover:text-slate-100'">{{ m.l }}</button>
               </div>
+              <button v-if="orderFilter === 'LIVE'" @click="reconcileLive" class="px-2.5 py-1 rounded-lg bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/35 text-sky-300 transition">核对实盘</button>
               <a :href="'/api/orders/export?mode=' + orderFilter" target="_blank"
                  class="px-2.5 py-1 rounded-lg bg-sub hover:bg-slate-800 border border-line2 text-slate-200 transition">导出 CSV</a>
-              <button @click="resetPaper" class="px-2.5 py-1 rounded-lg bg-sub hover:bg-slate-800 border border-line2 text-slate-300 transition">重置</button>
+              <button v-if="orderFilter === 'PAPER'" @click="resetPaper" class="px-2.5 py-1 rounded-lg bg-sub hover:bg-slate-800 border border-line2 text-slate-300 transition">重置</button>
+              <button v-else-if="orderFilter === 'LIVE'" @click="refreshBalance" class="px-2.5 py-1 rounded-lg bg-sub hover:bg-slate-800 border border-line2 text-rose-300 transition">刷新资产</button>
             </div>
           </div>
 
@@ -659,7 +711,12 @@
                   <span v-else-if="o.awaiting_official && o.provisional_outcome" class="text-[10px] text-amber-400">预{{ o.provisional_outcome }}</span>
                 </div>
               </div>
-              <div v-if="expandedOrderId === o.order_id && o.notes" class="pt-1.5 border-t border-line text-[10px] text-slate-400 leading-relaxed break-all">
+              <div v-if="o.bal_before != null || o.recon_status || o.settled_balance != null" class="flex items-center justify-between gap-2 text-[10px] mono pt-1 border-t border-line/60">
+                <span class="text-slate-400">资金: {{ fmtOrderFunds(o) }}<span v-if="o.settled_balance != null" class="text-slate-200 ml-2">结余 {{ fmtSettledBal(o) }}</span></span>
+                <span class="font-sans font-medium" :class="reconColor(o.recon_status)">{{ fmtRecon(o) }}</span>
+              </div>
+              <div v-if="expandedOrderId === o.order_id && (o.notes || o.recon_note)" class="pt-1.5 border-t border-line text-[10px] text-slate-400 leading-relaxed break-all">
+                <div v-if="o.recon_note" class="text-sky-300 mb-0.5">{{ o.recon_note }}</div>
                 <div>盘口: {{ o.book_bid && o.book_ask ? (o.book_bid.toFixed(2) + '/' + o.book_ask.toFixed(2)) : '--' }}</div>
                 <div class="mt-0.5">{{ o.notes }}</div>
               </div>
@@ -673,7 +730,6 @@
               <thead class="text-[11px] text-slate-400 border-b border-line sticky top-0 bg-card font-semibold">
                 <tr>
                   <th class="py-2 pr-3">时间</th>
-                  <th class="py-2 pr-3">模式</th>
                   <th class="py-2 pr-3">方向</th>
                   <th class="py-2 pr-3">方式</th>
                   <th class="py-2 pr-3">盘口</th>
@@ -682,13 +738,14 @@
                   <th class="py-2 pr-3">优势</th>
                   <th class="py-2 pr-3">状态</th>
                   <th class="py-2 pr-3">结果</th>
-                  <th class="py-2 text-right">盈亏</th>
+                  <th class="py-2 pr-3">资金核对</th>
+                  <th class="py-2 pr-3 text-right">盈亏</th>
+                  <th class="py-2 text-right">结算余额</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-line mono">
                 <tr v-for="o in visibleOrders" :key="o.order_id" :title="o.notes || ''" class="hover:bg-[#131B2B] transition-colors">
                   <td class="py-2 pr-3 text-slate-400">{{ fmtTime(o.created_at) }}</td>
-                  <td class="py-2 pr-3"><span class="px-1.5 py-0.5 rounded bg-sub border border-line text-[10px] text-slate-300 font-sans">{{ fmtMode(o.mode) }}</span></td>
                   <td class="py-2 pr-3 font-bold" :class="o.side === 'UP' ? 'text-emerald-400' : 'text-rose-400'">{{ o.side }}</td>
                   <td class="py-2 pr-3 text-slate-200 font-sans">{{ fmtArm(o.arm_id) }}</td>
                   <td class="py-2 pr-3 text-slate-400">{{ o.book_bid && o.book_ask ? (o.book_bid.toFixed(2) + '/' + o.book_ask.toFixed(2)) : '--' }}</td>
@@ -704,11 +761,19 @@
                     <span v-else-if="o.awaiting_official" class="text-[11px] text-amber-400 font-sans">确权中</span>
                     <span v-else class="text-slate-500">--</span>
                   </td>
-                  <td class="py-2 text-right font-bold" :class="o.pnl_usdc > 0 ? 'text-emerald-400' : (o.pnl_usdc < 0 ? 'text-rose-400' : 'text-slate-400')">
+                  <td class="py-2 pr-3" :title="o.recon_note || '下单前→后可用资金核对'">
+                    <span class="text-[11px] text-slate-300">{{ fmtOrderFunds(o) }}</span>
+                    <span v-if="o.recon_status" class="ml-1.5 px-1 py-0.5 rounded text-[10px] font-sans" :class="reconBadge(o.recon_status)">{{ fmtRecon(o) }}</span>
+                  </td>
+                  <td class="py-2 pr-3 text-right font-bold" :class="o.pnl_usdc > 0 ? 'text-emerald-400' : (o.pnl_usdc < 0 ? 'text-rose-400' : 'text-slate-400')">
                     {{ o.pnl_usdc > 0 ? '+' : '' }}{{ Number(o.pnl_usdc).toFixed(2) }}
                   </td>
+                  <td class="py-2 text-right" :class="o.settled_balance != null ? 'text-slate-200' : 'text-slate-600'"
+                      :title="o.settled_balance != null ? ('本笔结算/平仓后余额: $' + Number(o.settled_balance).toFixed(4)) : '未结算/撤单无结余变化'">
+                    {{ fmtSettledBal(o) }}
+                  </td>
                 </tr>
-                <tr v-if="!visibleOrders.length"><td colspan="11" class="py-10 text-center text-slate-500 font-sans">暂无订单</td></tr>
+                <tr v-if="!visibleOrders.length"><td colspan="12" class="py-10 text-center text-slate-500 font-sans">暂无订单</td></tr>
               </tbody>
             </table>
           </div>
@@ -743,6 +808,9 @@
                       class="px-3 py-1.5 rounded-lg bg-[#4f46e5] hover:bg-indigo-500 text-white font-semibold disabled:opacity-50">
                 {{ state.training_status.running ? '训练中' : '训练' }}
               </button>
+              <button @click="openStrategyModal('export')" class="px-2.5 py-1.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/35 text-emerald-300 font-medium">导出策略</button>
+              <button @click="openStrategyModal('import')" class="px-2.5 py-1.5 rounded-lg bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/35 text-sky-300 font-medium">导入策略</button>
+              <button v-if="strategyBackup.has_backup" @click="rollbackStrategy" class="px-2.5 py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/35 text-amber-300" title="撤回至导入前的策略快照">撤回导入</button>
               <button @click="resetLearning" class="px-2.5 py-1.5 rounded-lg bg-sub hover:bg-slate-800 border border-line2 text-slate-200">重置权重</button>
               <button @click="resetDataset" class="px-2.5 py-1.5 rounded-lg bg-rose-950/70 hover:bg-rose-900/80 border border-rose-500/40 text-rose-200">清空样本</button>
             </div>
@@ -948,50 +1016,124 @@
 
         <!-- Wallet & Security -->
         <div class="term-card p-3.5 sm:p-4 space-y-4">
-          <div class="flex items-center justify-between pb-3 border-b border-line">
-            <h2 class="text-sm font-bold text-white">钱包与安全</h2>
-            <button @click="refreshBalance" class="px-3 py-1 rounded-lg bg-sub hover:bg-slate-800 border border-line2 text-slate-200 text-xs">刷新资产</button>
+          <div class="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-line">
+            <div class="flex items-center gap-2">
+              <h2 class="text-sm font-bold text-white">钱包与安全 (CLOB V2)</h2>
+              <span class="px-1.5 py-0.5 rounded text-[10px] mono border"
+                    :class="state.wallet.sdk_available ? 'bg-emerald-500/15 border-emerald-500/35 text-emerald-300' : 'bg-rose-500/15 border-rose-500/35 text-rose-300'">
+                {{ state.wallet.sdk_available ? '官方 V2 SDK 就绪' : '缺 polymarket-client (需运行 deploy.sh)' }}
+              </span>
+              <span v-if="state.wallet.has_api_creds && !state.wallet.is_observer_only"
+                    class="px-1.5 py-0.5 rounded text-[10px] mono border"
+                    :class="state.wallet.user_ws_connected ? 'bg-sky-500/15 border-sky-500/35 text-sky-300' : 'bg-amber-500/15 border-amber-500/35 text-amber-300'">
+                {{ state.wallet.user_ws_connected ? 'UserWS 已连' : 'UserWS 待连' }}
+              </span>
+            </div>
+            <div class="flex items-center gap-1.5">
+              <button @click="reconcileLive" class="px-2.5 py-1 rounded-lg bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/35 text-sky-300 text-xs">立即对账</button>
+              <button @click="cancelAllLive" class="px-2.5 py-1 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/35 text-rose-300 text-xs">撤全部实盘挂单</button>
+              <button @click="refreshBalance" class="px-3 py-1 rounded-lg bg-sub hover:bg-slate-800 border border-line2 text-slate-200 text-xs">刷新资产</button>
+            </div>
           </div>
 
+          <div v-if="state.wallet && state.wallet.live_error" class="px-3 py-2 rounded-lg bg-rose-500/15 border border-rose-500/40 text-rose-200 text-xs mono">
+            实盘通道告警: {{ state.wallet.live_error }}
+          </div>
           <div class="grid grid-cols-2 md:grid-cols-5 gap-2.5">
             <div class="term-box p-3">
               <div class="text-[11px] text-slate-400">总净值</div>
               <div class="text-lg font-bold mono text-white mt-0.5">${{ state.portfolio.total_equity }}</div>
             </div>
             <div class="term-box p-3">
-              <div class="text-[11px] text-slate-400">USDC.e</div>
-              <div class="text-lg font-bold mono text-emerald-400 mt-0.5">${{ state.portfolio.usdc_balance }}</div>
+              <div class="text-[11px] text-slate-400">可用下单 pUSD</div>
+              <div class="text-lg font-bold mono mt-0.5" :class="livePusdBalance >= 5.20 ? 'text-emerald-400' : 'text-amber-400'">${{ livePusdBalance.toFixed(2) }}</div>
+              <div v-if="(state.portfolio.open_orders_locked_usdc || 0) > 0 || (state.portfolio.local_reserved_usdc || 0) > 0" class="text-[10px] mono text-slate-400 mt-0.5">
+                现金 ${{ Number(state.portfolio.cash || 0).toFixed(2) }} · 锁定 ${{ (Number(state.portfolio.open_orders_locked_usdc || 0) + Number(state.portfolio.local_reserved_usdc || 0)).toFixed(2) }}
+              </div>
+              <div v-else-if="state.portfolio.legacy_usdce_balance > 0" class="text-[10px] mono text-amber-300/90 mt-0.5">旧 USDC.e: ${{ state.portfolio.legacy_usdce_balance }}</div>
             </div>
             <div class="term-box p-3">
               <div class="text-[11px] text-slate-400">持仓</div>
               <div class="text-lg font-bold mono text-sky-400 mt-0.5">${{ state.portfolio.portfolio_value }}</div>
             </div>
             <div class="term-box p-3">
-              <div class="text-[11px] text-slate-400">授权</div>
-              <div class="text-sm font-bold mt-1.5" :class="state.portfolio.allowance_ok ? 'text-emerald-400' : 'text-amber-400'">
-                {{ state.portfolio.allowance_ok ? '已授权' : '未授权' }}
+              <div class="text-[11px] text-slate-400">V2 交易授权</div>
+              <div class="text-sm font-bold mt-1" :class="state.portfolio.allowance_ok ? 'text-emerald-400' : 'text-amber-400'">
+                {{ state.portfolio.allowance_ok ? '已全授权' : '未授权' }}
               </div>
+              <div v-if="state.portfolio.missing_approvals && state.portfolio.missing_approvals.length"
+                   class="text-[10px] text-amber-300 truncate mt-0.5" :title="state.portfolio.missing_approvals.join('、')">
+                缺: {{ state.portfolio.missing_approvals.join('、') }}
+              </div>
+              <div v-else-if="state.portfolio.error" class="text-[10px] text-rose-400 truncate mt-0.5" :title="state.portfolio.error">{{ state.portfolio.error }}</div>
             </div>
             <div class="term-box p-3 col-span-2 md:col-span-1 min-w-0">
-              <div class="text-[11px] text-slate-400">地址</div>
-              <div class="text-xs mono text-slate-200 mt-1 truncate" :title="state.wallet.wallet_address || ''">{{ state.wallet.wallet_address || '未配置' }}</div>
+              <div class="text-[11px] text-slate-400">钱包 ({{ state.wallet.wallet_type || 'V2' }})</div>
+              <div class="text-xs mono text-slate-200 mt-1 truncate" :title="state.portfolio.funder_address || state.wallet.wallet_address || ''">{{ state.portfolio.funder_address || state.wallet.wallet_address || '未配置' }}</div>
               <div class="text-[10px] text-slate-500 mt-0.5">API: {{ state.wallet.has_api_creds ? '已派生' : '未派生' }}</div>
             </div>
           </div>
 
-          <div v-if="state.portfolio.open_positions && state.portfolio.open_positions.length" class="overflow-x-auto term-box p-3">
-            <table class="w-full text-xs text-left mono whitespace-nowrap">
-              <thead class="text-slate-400 border-b border-line font-sans">
-                <tr><th class="py-1.5 pr-3">市场</th><th class="pr-3">方向</th><th class="pr-3">份额</th><th class="pr-3">均价</th><th class="pr-3">现价</th><th class="pr-3">市值</th><th class="text-right">浮盈</th></tr>
-              </thead>
-              <tbody class="divide-y divide-line">
-                <tr v-for="(p, idx) in state.portfolio.open_positions" :key="idx">
-                  <td class="py-1.5 pr-3 text-white max-w-[180px] sm:max-w-xs truncate font-sans">{{ p.title }}</td>
-                  <td class="pr-3 text-slate-300">{{ p.outcome }}</td><td class="pr-3 text-slate-300">{{ p.size }}</td><td class="pr-3 text-slate-300">{{ p.avg_price }}</td><td class="pr-3 text-slate-300">{{ p.cur_price }}</td><td class="pr-3 text-white">${{ p.current_value }}</td>
-                  <td class="text-right font-semibold" :class="p.cash_pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'">{{ p.cash_pnl }}</td>
-                </tr>
-              </tbody>
-            </table>
+          <div v-if="(markedOpenPositions.length > 0) || hiddenSettledZeroCount > 0" class="term-box p-3 space-y-2">
+            <div class="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+              <span class="font-bold text-white">实时持仓 ({{ markedOpenPositions.length }})</span>
+              <div class="flex items-center gap-2 text-slate-400">
+                <span v-if="state.portfolio.open_orders_locked_usdc > 0" class="mono text-amber-300">挂单占用 ${{ Number(state.portfolio.open_orders_locked_usdc).toFixed(2) }}</span>
+                <label v-if="hiddenSettledZeroCount > 0 || showSettledZero" class="inline-flex items-center gap-1 cursor-pointer select-none">
+                  <input v-model="showSettledZero" type="checkbox" class="rounded" />
+                  <span>{{ showSettledZero ? '含已结算归零' : ('已隐藏 ' + hiddenSettledZeroCount + ' 个归零仓位') }}</span>
+                </label>
+              </div>
+            </div>
+            <div v-if="markedOpenPositions.length" class="overflow-x-auto">
+              <table class="w-full text-xs text-left mono whitespace-nowrap">
+                <thead class="text-slate-400 border-b border-line font-sans">
+                  <tr><th class="py-1.5 pr-3">市场</th><th class="pr-3">方向</th><th class="pr-3">份额</th><th class="pr-3">均价</th><th class="pr-3">现价</th><th class="pr-3">市值</th><th class="pr-3">浮盈</th><th class="text-right">状态</th></tr>
+                </thead>
+                <tbody class="divide-y divide-line">
+                  <tr v-for="(p, idx) in markedOpenPositions" :key="p.asset_id || idx">
+                    <td class="py-1.5 pr-3 text-white max-w-[180px] sm:max-w-xs truncate font-sans" :title="p.title">{{ p.title }}</td>
+                    <td class="pr-3 font-semibold" :class="String(p.outcome).toUpperCase() === 'UP' ? 'text-emerald-400' : 'text-rose-400'">{{ p.outcome }}</td>
+                    <td class="pr-3 text-slate-300">{{ p.size }}</td>
+                    <td class="pr-3 text-slate-300">{{ Number(p.avg_price || 0).toFixed(2) }}</td>
+                    <td class="pr-3" :class="p._live ? 'text-sky-300 font-semibold' : 'text-slate-300'" :title="p._live ? '本地盘口实时估值' : 'Polymarket 接口快照'">
+                      {{ p._markPrice != null ? p._markPrice.toFixed(3) : '—' }}
+                    </td>
+                    <td class="pr-3 text-white">{{ p._markValue != null ? ('$' + p._markValue.toFixed(2)) : '—' }}</td>
+                    <td class="pr-3 font-semibold" :class="p._markPnl == null ? 'text-slate-400' : (p._markPnl >= 0 ? 'text-emerald-400' : 'text-rose-400')">
+                      {{ p._markPnl != null ? ((p._markPnl >= 0 ? '+' : '') + p._markPnl.toFixed(2)) : '—' }}
+                    </td>
+                    <td class="text-right font-sans">
+                      <span class="px-1.5 py-0.5 rounded text-[10px]"
+                            :class="p._state === 'LIVE' ? 'bg-emerald-500/15 text-emerald-300' : (p._state === 'REDEEM' ? 'bg-amber-500/20 text-amber-300' : 'bg-slate-800 text-slate-400')"
+                            :title="p._state === 'REDEEM' ? '已结算获胜，可到 polymarket.com 赎回' : ''">
+                        {{ p._state === 'LIVE' ? '进行中' : (p._state === 'REDEEM' ? '可赎回' : '待结算') }}
+                      </span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div v-if="state.portfolio.open_orders && state.portfolio.open_orders.length" class="term-box p-3 space-y-2">
+            <div class="text-[11px] font-bold text-white">当前实盘挂单 ({{ state.portfolio.open_orders.length }})</div>
+            <div class="overflow-x-auto">
+              <table class="w-full text-xs text-left mono whitespace-nowrap">
+                <thead class="text-slate-400 border-b border-line font-sans">
+                  <tr><th class="py-1.5 pr-3">方向</th><th class="pr-3">价格</th><th class="pr-3">已成/总量</th><th class="pr-3">状态</th><th class="text-right">操作</th></tr>
+                </thead>
+                <tbody class="divide-y divide-line">
+                  <tr v-for="oo in state.portfolio.open_orders" :key="oo.order_id">
+                    <td class="py-1.5 pr-3 font-semibold" :class="oo.side === 'BUY' ? 'text-emerald-400' : 'text-rose-400'">{{ oo.side }} {{ oo.outcome || '' }}</td>
+                    <td class="pr-3 text-white">{{ Number(oo.price || 0).toFixed(2) }}</td>
+                    <td class="pr-3 text-slate-300">{{ oo.size_matched }} / {{ oo.original_size }}</td>
+                    <td class="pr-3 text-slate-400">{{ oo.status }}</td>
+                    <td class="text-right font-sans"><button @click="cancelSingleLive(oo.order_id)" class="text-rose-400 hover:underline">撤单</button></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </div>
 
           <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
@@ -1007,18 +1149,20 @@
               <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 <label class="text-slate-300">钱包类型
                   <select v-model.number="walletForm.signature_type" class="w-full mt-1 px-2.5 py-2 rounded-md bg-card border border-line2 text-white">
-                    <option :value="0">0 · EOA 钱包</option>
-                    <option :value="1">1 · Magic 代理</option>
+                    <option :value="3">3 · Deposit Wallet (V2 默认)</option>
+                    <option :value="1">1 · Poly Proxy (邮箱/Google)</option>
                     <option :value="2">2 · Gnosis Safe</option>
+                    <option :value="0">0 · EOA 直连钱包</option>
                   </select>
                 </label>
-                <label class="text-slate-300">代理地址 (Funder)
-                  <input v-model="walletForm.funder_address" type="text" placeholder="0x..." class="w-full mt-1 px-2.5 py-2 rounded-md bg-card border border-line2 mono text-white" />
+                <label class="text-slate-300">代理地址 (可点自动识别)
+                  <input v-model="walletForm.funder_address" type="text" placeholder="0x... (自动识别填充)" class="w-full mt-1 px-2.5 py-2 rounded-md bg-card border border-line2 mono text-white" />
                 </label>
               </div>
               <div class="flex gap-2 pt-1">
+                <button @click="detectWallet" class="flex-1 py-2 rounded-lg bg-sky-600/20 hover:bg-sky-600/30 border border-sky-500/40 text-sky-300 font-semibold">自动识别</button>
                 <button @click="saveWallet" class="flex-1 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-line2 text-white font-semibold">保存</button>
-                <button @click="deriveApi" class="flex-1 py-2 rounded-lg bg-[#4f46e5] hover:bg-indigo-500 text-white font-semibold">派生 API</button>
+                <button @click="deriveApi" class="flex-1 py-2 rounded-lg bg-[#4f46e5] hover:bg-indigo-500 text-white font-semibold">派生 V2 API</button>
               </div>
             </div>
 
@@ -1049,6 +1193,95 @@
         </div>
       </section>
     </main>
+
+    <!-- Strategy Export / Import Modal (v38) -->
+    <div v-if="strategyModal.open" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4" @click.self="closeStrategyModal">
+      <div class="w-full max-w-lg term-card p-5 space-y-4 shadow-2xl border border-line2">
+        <div class="flex items-center justify-between pb-3 border-b border-line">
+          <div class="flex items-center gap-2">
+            <h3 class="text-sm font-bold text-white">策略导出与导入</h3>
+            <div class="flex bg-sub p-0.5 rounded-lg border border-line2 text-[11px]">
+              <button @click="strategyModal.tab = 'export'" class="px-2.5 py-0.5 rounded-md font-medium transition"
+                      :class="strategyModal.tab === 'export' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'">导出</button>
+              <button @click="strategyModal.tab = 'import'" class="px-2.5 py-0.5 rounded-md font-medium transition"
+                      :class="strategyModal.tab === 'import' ? 'bg-sky-600 text-white' : 'text-slate-400 hover:text-white'">导入</button>
+            </div>
+          </div>
+          <button @click="closeStrategyModal" class="text-slate-400 hover:text-white text-sm px-2 py-0.5">✕</button>
+        </div>
+
+        <!-- Export Panel -->
+        <div v-if="strategyModal.tab === 'export'" class="space-y-3 text-xs">
+          <div class="term-box p-3 space-y-1.5 text-[11px] text-slate-300">
+            <div class="flex justify-between"><span>当前主模型</span><strong class="mono text-sky-400">{{ state.learning.active_version_id }}</strong></div>
+            <div class="flex justify-between"><span>已进化场次 / Brier</span><strong class="mono text-emerald-400">{{ state.learning.updates_count }} 场 · {{ state.learning.rolling_brier }}</strong></div>
+            <div class="text-[10px] text-slate-400 pt-1 border-t border-line">安全隔离：仅导出策略权重、进化参数、离场/执行臂、风控底线与离线主模型，绝不包含私钥、API 凭证、登录密码或账户余额。</div>
+          </div>
+
+          <label class="block text-slate-300">策略名称 / 备注（可选）
+            <input v-model="strategyModal.exportName" type="text" maxlength="64" placeholder="例如：BTC5m_稳健趋势_1123"
+                   class="w-full mt-1 px-3 py-2 rounded-md bg-sub border border-line2 text-white text-xs" />
+          </label>
+
+          <label class="flex items-center gap-2 text-slate-200 cursor-pointer select-none">
+            <input v-model="strategyModal.includeModel" type="checkbox" class="rounded" />
+            <span>同时打包当前生效的离线主模型 (.pkl 含 SHA-256 校验)</span>
+          </label>
+
+          <div class="flex justify-end gap-2 pt-2">
+            <button @click="closeStrategyModal" class="px-3.5 py-2 rounded-lg bg-sub hover:bg-slate-800 border border-line2 text-slate-300">取消</button>
+            <button @click="doExportStrategy" class="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold">下载策略 JSON</button>
+          </div>
+        </div>
+
+        <!-- Import Panel -->
+        <div v-else class="space-y-3 text-xs">
+          <div class="term-box p-3.5 border-dashed border-line2 text-center space-y-2">
+            <input ref="strategyFileInput" type="file" accept=".json,application/json" @change="onStrategyFileSelected" class="hidden" />
+            <button type="button" @click="triggerStrategyFilePick"
+                    class="px-3.5 py-2 rounded-lg bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/40 text-sky-300 font-semibold">
+              选择策略 JSON 文件
+            </button>
+            <div class="text-[11px] text-slate-400 truncate">
+              {{ strategyModal.fileName || '支持 poly-elder-quant 导出的 .json 策略包（导入前自动备份当前状态）' }}
+            </div>
+          </div>
+
+          <div v-if="strategyModal.preview" class="term-box p-3 space-y-1.5 text-[11px]">
+            <div class="flex justify-between"><span class="text-slate-400">策略名称</span><strong class="text-white truncate max-w-[260px]">{{ strategyModal.preview.name }}</strong></div>
+            <div class="flex justify-between"><span class="text-slate-400">导出时间 / 版本</span><span class="mono text-slate-300">{{ strategyModal.preview.exportedAt }} · {{ strategyModal.preview.appVersion }}</span></div>
+            <div class="flex justify-between"><span class="text-slate-400">在线学习进度</span><span class="mono text-emerald-400">{{ strategyModal.preview.updatesCount }} 场 · Brier {{ strategyModal.preview.brier }}</span></div>
+            <div class="flex justify-between"><span class="text-slate-400">附带离线主模型</span>
+              <span class="mono" :class="strategyModal.preview.hasModel ? 'text-sky-400' : 'text-slate-500'">
+                {{ strategyModal.preview.hasModel ? (strategyModal.preview.modelType + ' (' + strategyModal.preview.modelId + ')') : '无（纯在线参数包）' }}
+              </span>
+            </div>
+          </div>
+
+          <div v-if="strategyModal.preview" class="grid grid-cols-2 gap-2 pt-1 text-[11px] text-slate-200">
+            <label class="flex items-center gap-1.5 cursor-pointer"><input v-model="strategyModal.applyOnline" type="checkbox" class="rounded" />在线权重与进化参数</label>
+            <label class="flex items-center gap-1.5 cursor-pointer" :class="!strategyModal.preview.hasRisk ? 'opacity-40' : ''"><input v-model="strategyModal.applyRisk" :disabled="!strategyModal.preview.hasRisk" type="checkbox" class="rounded" />风控底线参数</label>
+            <label class="flex items-center gap-1.5 cursor-pointer" :class="!strategyModal.preview.hasAutoTrain ? 'opacity-40' : ''"><input v-model="strategyModal.applyAutoTrain" :disabled="!strategyModal.preview.hasAutoTrain" type="checkbox" class="rounded" />自动训练计划</label>
+            <label class="flex items-center gap-1.5 cursor-pointer" :class="!strategyModal.preview.hasModel ? 'opacity-40' : ''"><input v-model="strategyModal.applyModel" :disabled="!strategyModal.preview.hasModel" type="checkbox" class="rounded" />激活离线主模型</label>
+          </div>
+
+          <div v-if="strategyModal.error" class="text-[11px] text-rose-400 bg-rose-500/10 border border-rose-500/30 rounded-md px-3 py-2">
+            {{ strategyModal.error }}
+          </div>
+
+          <div class="flex items-center justify-between gap-2 pt-2">
+            <span class="text-[10px] text-slate-500">导入即时热生效，不会改变模拟/实盘模式</span>
+            <div class="flex gap-2">
+              <button @click="closeStrategyModal" class="px-3.5 py-2 rounded-lg bg-sub hover:bg-slate-800 border border-line2 text-slate-300">取消</button>
+              <button @click="doImportStrategy" :disabled="!strategyModal.parsedBundle || strategyModal.importing"
+                      class="px-4 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-semibold disabled:opacity-40">
+                {{ strategyModal.importing ? '导入中...' : '确认导入' }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <!-- MOBILE Fixed Bottom Navigation Bar (< sm) -->
     <nav class="sm:hidden fixed bottom-0 inset-x-0 z-40 bg-panel/95 backdrop-blur border-t border-line safe-pb">
@@ -1085,9 +1318,87 @@ createApp({
     const loggingIn = ref(false);
     const wsConnected = ref(false);
     const activeTab = ref('home');
-    const orderFilter = ref('ALL');
+    const orderFilter = ref('PAPER');
+    const ledgerStats = reactive({ mode: 'PAPER', total_trades: 0, wins: 0, losses: 0, win_rate: 0, total_pnl: 0, daily_pnl: 0, total_fees: 0, profit_factor: 0, max_drawdown: 0 });
+    const ledgerAudit = ref(null);
     const hideCancelled = ref(false);
+    const showSettledZero = ref(false);
     const orders = ref([]);
+    const livePusdBalance = computed(() => {
+      const pf = state.portfolio || {};
+      const v = Number(pf.available_cash ?? pf.pusd_balance ?? pf.usdc_balance ?? 0);
+      return Number.isFinite(v) ? Math.max(0, v) : 0;
+    });
+    const livePortfolioValue = computed(() => {
+      const pf = state.portfolio || {};
+      const v = Number(pf.portfolio_value ?? 0);
+      return Number.isFinite(v) ? v : 0;
+    });
+    const liveTotalEquity = computed(() => {
+      const pf = state.portfolio || {};
+      const tot = Number(pf.total_equity);
+      if (Number.isFinite(tot) && tot > 0) return tot;
+      return livePusdBalance.value + livePortfolioValue.value;
+    });
+    const activeBalance = computed(() => {
+      if (state.mode === 'LIVE') return liveTotalEquity.value;
+      const pb = Number(state.paper_balance || 0);
+      return Number.isFinite(pb) ? pb : 0;
+    });
+    const liveBalanceTooltip = computed(() => {
+      const pf = state.portfolio || {};
+      const locked = Number(pf.open_orders_locked_usdc || 0) + Number(pf.local_reserved_usdc || 0);
+      const lockStr = locked > 0 ? ` | 挂单/在途锁定: $${locked.toFixed(2)}` : '';
+      const err = pf.error ? ` | 提示: ${pf.error}` : '';
+      const leg = Number(pf.legacy_usdce_balance || 0) > 0 ? ` | 旧USDC.e: $${Number(pf.legacy_usdce_balance).toFixed(2)}` : '';
+      return `真正可用下单 pUSD: $${livePusdBalance.value.toFixed(2)}${lockStr} | 持仓市值: $${livePortfolioValue.value.toFixed(2)} | 总净值: $${liveTotalEquity.value.toFixed(2)} (实盘单笔需含费≥$5.20)${leg}${err}`;
+    });
+
+    const _evalPositions = computed(() => {
+      const rawList = (state.portfolio && state.portfolio.open_positions) || [];
+      const curWin = Number(state.round && state.round.window_ts || 0);
+      const nowSec = Date.now() / 1000;
+      let hiddenZero = 0;
+      const out = [];
+      for (const p of rawList) {
+        let sStart = p.session_start != null ? Number(p.session_start) : null;
+        if (sStart == null && (p.slug || p.event_slug)) {
+          const m = /updown-5m-(\d{9,})/.exec(String(p.slug || p.event_slug));
+          if (m) sStart = Number(m[1]);
+        }
+        const ended = !!p.redeemable || (sStart != null && nowSec >= sStart + 300);
+        const apiVal = p.current_value != null ? Number(p.current_value) : NaN;
+        const isSettledZero = ended && Number.isFinite(apiVal) && apiVal <= 0.005;
+        if (isSettledZero && !showSettledZero.value) {
+          hiddenZero += 1;
+          continue;
+        }
+        const size = Number(p.current_size ?? p.size ?? 0);
+        const avg = Number(p.avg_price ?? 0);
+        let livePx = null;
+        if (!ended && sStart != null && curWin > 0 && sStart === curWin) {
+          const sideKey = String(p.outcome || '').toUpperCase() === 'UP' ? 'UP' : (String(p.outcome || '').toUpperCase() === 'DOWN' ? 'DOWN' : '');
+          const bk = sideKey && state.orderbook ? state.orderbook[sideKey] : null;
+          if (bk) {
+            const bid = Number(bk.best_bid || 0);
+            const ask = Number(bk.best_ask || 0);
+            if (bid > 0 && ask > 0 && (ask - bid) <= 0.10 + 1e-9) livePx = (bid + ask) / 2;
+            else if (bid > 0) livePx = bid;
+            else if (ask > 0) livePx = ask;
+          }
+        }
+        const apiPx = (p.current_price ?? p.cur_price) != null ? Number(p.current_price ?? p.cur_price) : NaN;
+        const markPrice = livePx != null ? livePx : (Number.isFinite(apiPx) ? apiPx : null);
+        const markValue = markPrice != null ? size * markPrice : (Number.isFinite(apiVal) ? apiVal : null);
+        const markPnl = markValue != null ? (markValue - size * avg) : null;
+        const stTag = p.redeemable ? 'REDEEM' : (ended ? 'PENDING' : 'LIVE');
+        out.push({ ...p, _live: livePx != null, _markPrice: markPrice, _markValue: markValue, _markPnl: markPnl, _state: stTag });
+      }
+      return { list: out, hiddenZero };
+    });
+    const markedOpenPositions = computed(() => _evalPositions.value.list);
+    const hiddenSettledZeroCount = computed(() => _evalPositions.value.hiddenZero);
+
     const visibleOrders = computed(() => hideCancelled.value ? orders.value.filter(o => o.status !== 'CANCELLED') : orders.value);
     const modelVersions = ref([]);
     const toast = reactive({ show: false, msg: '', type: 'ok' });
@@ -1103,6 +1414,7 @@ createApp({
 
     const state = reactive({
       mode: 'PAPER',
+      paused: false,
       system: { cpu_percent: 0, cpu_cores: 1, mem_percent: 0, mem_used_mb: 0, mem_total_mb: 0, proc_rss_mb: 0, swap_percent: 0, disk_free_gb: 0, net_rx_kbps: 0, net_tx_kbps: 0, net_cum_rx_mb: 0, net_cum_tx_mb: 0, uptime_sec: 0 },
       feeds: { binance: {}, binance_perp: {}, rtds: {}, polybolt: {}, gamma: {}, clob: {}, active_oracle: 'NONE', geo_check: { clock_drift_ms: 0, country: '...', blocked: false } },
       round: { slug: '', elapsed_sec: 0, remaining_sec: 300, price_to_beat: '--', ptb_source: '同步中', twap60: '--', twap_diff_usd: null, oracle_spot: 0, spot_twap_diff_usd: null, binance_spot: 0, basis_usd: 0, last_settled: null, pending_settlement_count: 0 },
@@ -1114,20 +1426,42 @@ createApp({
       dataset_counts: { settled_rounds: 0, total_slices: 0 },
       training_status: { running: false, auto_enabled: true, interval_hours: 12, next_auto_train_ts: 0 },
       wallet: { wallet_address: '', signature_type: 2, funder_address: '', has_private_key: false, has_api_creds: false, is_observer_only: false },
-      portfolio: { usdc_balance: 0, portfolio_value: 0, total_equity: 0, allowance_ok: false, open_positions: [] },
+      portfolio: { cash: 0, available_cash: 0, pusd_balance: 0, usdc_balance: 0, local_reserved_usdc: 0, cash_verified: false, legacy_usdce_balance: 0, portfolio_value: 0, total_equity: 0, open_orders_locked_usdc: 0, allowance_ok: false, sell_allowance_ok: false, approved: false, missing_approvals: [], open_orders: [], open_positions: [], error: '' },
       chart_points: [],
       round_events: [],
     });
 
     const riskForm = reactive({
-      unit_size_usdc: 10,
-      max_daily_loss_usdc: 100,
-      consecutive_loss_limit: 3,
+      unit_size_usdc: 5,
+      max_daily_loss_usdc: 50,
+      consecutive_loss_limit: 4,
+      live_taker_only: true,
+      live_enable_arb_lock: false,
+      strategy_engine: 'FV_DISCOUNT_LEADER',
+      fv_exit_mode: 'TIME_TWAP_MOAT',
+      fv_strict_5s_confirm: false,
     });
-    const walletForm = reactive({ private_key: '', signature_type: 2, funder_address: '' });
+    const walletForm = reactive({ private_key: '', signature_type: 3, funder_address: '' });
     const pwdForm = reactive({ old_password: '', new_password: '' });
     const webhookForm = reactive({ enabled: false, feishu_url: '', telegram_bot_token: '', telegram_chat_id: '' });
     const autoTrainForm = reactive({ enabled: true, interval_hours: 12, min_rounds: 16 });
+    const strategyBackup = reactive({ has_backup: false, saved_at: null, active_version_id: null });
+    const strategyFileInput = ref(null);
+    const strategyModal = reactive({
+      open: false,
+      tab: 'export',
+      exportName: '',
+      includeModel: true,
+      fileName: '',
+      parsedBundle: null,
+      preview: null,
+      applyOnline: true,
+      applyRisk: true,
+      applyAutoTrain: true,
+      applyModel: true,
+      importing: false,
+      error: '',
+    });
     let autoTrainSynced = false;
     let lastTradingRefreshTs = 0;
     let lastTradeCount = -1;
@@ -1180,6 +1514,9 @@ createApp({
         try {
           const payload = JSON.parse(ev.data);
           Object.assign(state, payload);
+          if (!autoTrainSynced && (payload.mode === 'LIVE' || payload.mode === 'PAPER')) {
+            orderFilter.value = payload.mode;
+          }
           if (!autoTrainSynced && payload.training_status) {
             autoTrainForm.enabled = !!payload.training_status.auto_enabled;
             autoTrainForm.interval_hours = Number(payload.training_status.interval_hours || 12);
@@ -1509,13 +1846,22 @@ createApp({
 
     async function loadTradingData(silent = false) {
       try {
+        if (!silent && state.mode === 'LIVE') {
+          try {
+            const pf = await api('/api/wallet/refresh-balance', { method: 'POST' });
+            if (pf && typeof pf === 'object') Object.assign(state.portfolio, pf);
+          } catch {}
+        }
+        const eqMode = state.mode === 'LIVE' ? 'LIVE' : 'PAPER';
         const reqs = [
           api(`/api/orders?mode=${orderFilter.value}&limit=100`),
-          api(`/api/equity?mode=${state.mode === 'LIVE' ? 'LIVE' : 'PAPER'}`),
+          api(`/api/equity?mode=${eqMode}`),
         ];
         if (!silent) reqs.push(api('/api/config/risk'));
         const results = await Promise.all(reqs);
         orders.value = results[0].orders || [];
+        if (results[0].stats) Object.assign(ledgerStats, results[0].stats);
+        if (results[0].audit) ledgerAudit.value = results[0].audit;
         if (results[2]) Object.assign(riskForm, results[2]);
 
         await nextTick();
@@ -1523,7 +1869,7 @@ createApp({
         if (dom && !document.hidden) {
           const curve = results[1].curve || [];
           const lastPt = curve.length ? curve[curve.length - 1] : null;
-          const sig = `${curve.length}:${lastPt ? lastPt.ts : 0}:${lastPt ? lastPt.balance_usdc : 0}`;
+          const sig = `${eqMode}:${curve.length}:${lastPt ? lastPt.ts : 0}:${lastPt ? lastPt.balance_usdc : 0}`;
           if (!equityChart) {
             equityChart = echarts.init(dom, null, { renderer: 'canvas' });
             equityChartInited = false;
@@ -1532,6 +1878,8 @@ createApp({
             lastEquitySig = sig;
             const xData = curve.map(c => fmtTime(c.ts));
             const yData = curve.map(c => c.balance_usdc);
+            const showDot = curve.length <= 2;
+            const sName = eqMode === 'LIVE' ? '实盘净值($)' : '余额($)';
             if (!equityChartInited) {
               const narrowEq = window.innerWidth < 640;
               equityChart.setOption({
@@ -1541,11 +1889,11 @@ createApp({
                 grid: { left: narrowEq ? 44 : 50, right: narrowEq ? 10 : 16, top: 18, bottom: 22 },
                 xAxis: { type: 'category', data: xData, axisLine: { lineStyle: { color: '#1E293B' } }, axisLabel: { color: '#94a3b8', fontSize: narrowEq ? 9 : 10 } },
                 yAxis: { type: 'value', scale: true, splitLine: { lineStyle: { color: '#141D2E' } }, axisLabel: { color: '#cbd5e1', fontSize: narrowEq ? 9 : 10 } },
-                series: [{ name: '余额($)', type: 'line', smooth: true, showSymbol: false, data: yData, areaStyle: { color: 'rgba(16,185,129,0.14)' }, lineStyle: { color: '#10b981', width: 2 } }]
+                series: [{ name: sName, type: 'line', smooth: true, showSymbol: showDot, symbolSize: 6, data: yData, itemStyle: { color: '#10b981' }, areaStyle: { color: 'rgba(16,185,129,0.14)' }, lineStyle: { color: '#10b981', width: 2 } }]
               });
               equityChartInited = true;
             } else {
-              equityChart.setOption({ xAxis: { data: xData }, series: [{ data: yData }] }, false, true);
+              equityChart.setOption({ xAxis: { data: xData }, series: [{ name: sName, showSymbol: showDot, data: yData }] }, false, true);
             }
           }
         }
@@ -1556,6 +1904,7 @@ createApp({
       try {
         const res = await api('/api/learning/models');
         modelVersions.value = res.versions || [];
+        if (res.strategy_backup) Object.assign(strategyBackup, res.strategy_backup);
       } catch (e) { notify(e.message, 'error'); }
     }
 
@@ -1563,7 +1912,7 @@ createApp({
       try {
         const wh = await api('/api/config/webhook');
         Object.assign(webhookForm, wh);
-        walletForm.signature_type = state.wallet.signature_type ?? 2;
+        walletForm.signature_type = state.wallet.signature_type ?? 3;
         walletForm.funder_address = state.wallet.funder_address || '';
       } catch {}
     }
@@ -1606,14 +1955,42 @@ createApp({
     }
 
     async function setMode(m) {
+      if (m === state.mode) {
+        await loadTradingData(false);
+        return;
+      }
       let confirm_live = false;
-      if (m === 'LIVE') {
-        if (!confirm('确认开启实盘交易？')) return;
+      if (m === 'LIVE' && !state.paused) {
+        if (!confirm('当前处于运行中，切换至实盘将立即启用真实资金自动交易，确认继续？\n（如需仅查看实盘数据，请先点击右侧「运行中 · 暂停」后再切换）')) return;
         confirm_live = true;
       }
       try {
-        await api('/api/trading/mode', { method: 'POST', body: JSON.stringify({ mode: m, confirm_live }) });
-        notify(`已切换为${fmtMode(m)}`);
+        const res = await api('/api/trading/mode', { method: 'POST', body: JSON.stringify({ mode: m, confirm_live }) });
+        state.mode = res.mode || m;
+        if (typeof res.paused === 'boolean') state.paused = res.paused;
+        if (state.mode === 'LIVE' || state.mode === 'PAPER') orderFilter.value = state.mode;
+        lastEquitySig = '';
+        await loadTradingData(false);
+        notify(state.paused ? `已切换至${fmtMode(state.mode)}视图（当前已暂停下单）` : `已切换为${fmtMode(state.mode)}运行`);
+      } catch (e) { notify(e.message, 'error'); }
+    }
+
+    async function togglePause(forceVal = null) {
+      const nextPaused = forceVal === null ? !state.paused : !!forceVal;
+      let confirm_live = false;
+      if (!nextPaused && state.mode === 'LIVE') {
+        if (!confirm('确认启动实盘自动交易（真实资金下单）？')) return;
+        confirm_live = true;
+      }
+      try {
+        const res = await api('/api/trading/pause', { method: 'POST', body: JSON.stringify({ paused: nextPaused, confirm_live }) });
+        state.paused = !!res.paused;
+        if (res.mode) state.mode = res.mode;
+        if (!state.paused && state.mode === 'LIVE') {
+          lastEquitySig = '';
+          await loadTradingData(false);
+        }
+        notify(state.paused ? `已暂停${fmtMode(state.mode)}自动下单（可自由切换查看模拟/实盘）` : `已启动${fmtMode(state.mode)}自动交易`);
       } catch (e) { notify(e.message, 'error'); }
     }
 
@@ -1629,6 +2006,20 @@ createApp({
     async function resetBreaker() {
       await api('/api/trading/reset-breaker', { method: 'POST' });
       notify('已解除熔断');
+    }
+
+    function fmtFvExitShort(m) {
+      if (m === 'DYNAMIC_EV') return 'G2·EV低回撤';
+      if (m === 'HOLD_EXPIRY') return 'G0·持有到期';
+      return 'G3·TWAP护城河';
+    }
+
+    async function onToggleStrict5s() {
+      if (riskForm.fv_strict_5s_confirm && riskForm.fv_exit_mode !== 'HOLD_EXPIRY') {
+        riskForm.fv_exit_mode = 'HOLD_EXPIRY';
+        notify('严格5s确认单趋势极稳，已自动搭配「持有到期(G0)」避免早卖让利');
+      }
+      await saveRisk();
     }
 
     async function saveRisk() {
@@ -1651,6 +2042,47 @@ createApp({
       try {
         await api(`/api/learning/promote/${vid}`, { method: 'POST' });
         notify(`已切换主模型: ${vid}`); loadModels();
+      } catch (e) { notify(e.message, 'error'); }
+    }
+
+    async function detectWallet() {
+      try {
+        const res = await api('/api/wallet/detect', {
+          method: 'POST',
+          body: JSON.stringify({ private_key: walletForm.private_key || null, auto_apply: true }),
+        });
+        walletForm.private_key = '';
+        if (res.selected) {
+          walletForm.signature_type = res.selected.signature_type;
+          walletForm.funder_address = res.selected.wallet_type === 'EOA' ? '' : res.selected.address;
+          notify(`已识别 ${res.selected.wallet_type} (pUSD: $${res.selected.pusd_balance}, 得分 ${res.selected.score})`);
+        } else {
+          notify('已完成钱包识别');
+        }
+      } catch (e) { notify(e.message, 'error'); }
+    }
+
+    async function cancelAllLive() {
+      if (!confirm('确认撤销全部实盘未成交挂单？')) return;
+      try {
+        await api('/api/trading/cancel-live', { method: 'POST' });
+        notify('已发送实盘全撤指令');
+      } catch (e) { notify(e.message, 'error'); }
+    }
+
+    async function cancelSingleLive(orderId) {
+      try {
+        await api(`/api/trading/cancel-order/${encodeURIComponent(orderId)}`, { method: 'POST' });
+        notify('已撤单');
+        await refreshBalance();
+      } catch (e) { notify(e.message, 'error'); }
+    }
+
+    async function reconcileLive() {
+      try {
+        const res = await api('/api/trading/reconcile-live', { method: 'POST' });
+        notify(`实盘对账完成: 检查${res.checked || 0}笔 · 成交${res.filled || 0} · 撤单${res.cancelled || 0} · 仍在挂${res.still_open || 0}`);
+        await loadTradingData(false);
       } catch (e) { notify(e.message, 'error'); }
     }
 
@@ -1678,8 +2110,11 @@ createApp({
 
     async function refreshBalance() {
       try {
-        await api('/api/wallet/refresh-balance', { method: 'POST' });
-        notify('资产已刷新');
+        const pf = await api('/api/wallet/refresh-balance', { method: 'POST' });
+        if (pf && typeof pf === 'object') Object.assign(state.portfolio, pf);
+        lastEquitySig = '';
+        await loadTradingData(true);
+        notify(`资产已刷新 (净值 $${liveTotalEquity.value.toFixed(2)} · 可用 pUSD $${livePusdBalance.value.toFixed(2)})`);
       } catch (e) { notify(e.message, 'error'); }
     }
 
@@ -1723,17 +2158,151 @@ createApp({
       } catch (e) { notify(e.message, 'error'); }
     }
 
+    function openStrategyModal(tab = 'export') {
+      strategyModal.tab = tab;
+      strategyModal.error = '';
+      strategyModal.open = true;
+    }
+
+    function closeStrategyModal() {
+      strategyModal.open = false;
+      strategyModal.error = '';
+    }
+
+    async function doExportStrategy() {
+      try {
+        const qs = new URLSearchParams({
+          include_model: strategyModal.includeModel ? 'true' : 'false',
+          name: (strategyModal.exportName || '').trim(),
+        });
+        const resp = await fetch(`/api/strategy/export?${qs.toString()}`, { credentials: 'same-origin' });
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({}));
+          throw new Error(err.detail || `导出失败 (HTTP ${resp.status})`);
+        }
+        const blob = await resp.blob();
+        const disp = resp.headers.get('Content-Disposition') || '';
+        const m = disp.match(/filename="?([^"]+)"?/i);
+        const fname = (m && m[1]) ? m[1] : 'poly_strategy_v48.json';
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = fname;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        notify(`策略已导出: ${fname}`);
+        closeStrategyModal();
+      } catch (e) {
+        notify(e.message || '导出策略失败', 'error');
+      }
+    }
+
+    function triggerStrategyFilePick() {
+      if (strategyFileInput.value) {
+        strategyFileInput.value.value = '';
+        strategyFileInput.value.click();
+      }
+    }
+
+    function onStrategyFileSelected(ev) {
+      strategyModal.error = '';
+      strategyModal.parsedBundle = null;
+      strategyModal.preview = null;
+      const file = ev.target && ev.target.files && ev.target.files[0];
+      if (!file) return;
+      strategyModal.fileName = file.name;
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const obj = JSON.parse(String(reader.result || '{}'));
+          const st = obj.self_learning_state || ((obj.weights && obj.arms) ? obj : null);
+          if (!st || !Array.isArray(st.weights) || !Array.isArray(st.arms)) {
+            throw new Error('文件中未找到有效的策略权重结构 (self_learning_state)');
+          }
+          const hasModel = !!(obj.champion_model && obj.champion_model.artifact_b64);
+          const hasRisk = !!(obj.risk_config && typeof obj.risk_config === 'object');
+          const hasAutoTrain = !!(obj.auto_train_config && typeof obj.auto_train_config === 'object');
+          const brierArr = Array.isArray(st.recent_brier) && st.recent_brier.length ? st.recent_brier : [0.20];
+          const avgBrier = (brierArr.reduce((a, b) => a + Number(b || 0), 0) / brierArr.length).toFixed(4);
+          strategyModal.parsedBundle = obj;
+          strategyModal.preview = {
+            name: obj.name || file.name,
+            exportedAt: obj.exported_at_utc ? obj.exported_at_utc.replace('T', ' ').replace('Z', ' UTC') : '未知',
+            appVersion: obj.app_version || 'raw',
+            updatesCount: Number(st.updates_count || 0),
+            brier: (obj.summary && obj.summary.rolling_brier != null) ? obj.summary.rolling_brier : avgBrier,
+            hasModel,
+            modelType: hasModel ? (obj.champion_model.model_type || 'model') : '',
+            modelId: hasModel ? (obj.champion_model.version_id || '') : '',
+            hasRisk,
+            hasAutoTrain,
+          };
+          strategyModal.applyOnline = true;
+          strategyModal.applyRisk = hasRisk;
+          strategyModal.applyAutoTrain = hasAutoTrain;
+          strategyModal.applyModel = hasModel;
+        } catch (e) {
+          strategyModal.error = `解析失败: ${e.message}`;
+        }
+      };
+      reader.readAsText(file);
+    }
+
+    async function doImportStrategy() {
+      if (!strategyModal.parsedBundle) return;
+      strategyModal.importing = true;
+      strategyModal.error = '';
+      try {
+        const res = await api('/api/strategy/import', {
+          method: 'POST',
+          body: JSON.stringify({
+            bundle: strategyModal.parsedBundle,
+            apply_online_state: strategyModal.applyOnline,
+            apply_risk_config: strategyModal.applyRisk,
+            apply_auto_train: strategyModal.applyAutoTrain,
+            apply_champion_model: strategyModal.applyModel,
+          }),
+        });
+        if (res.risk_config) Object.assign(riskForm, res.risk_config);
+        if (res.auto_train_config) Object.assign(autoTrainForm, res.auto_train_config);
+        if (res.backup) Object.assign(strategyBackup, res.backup);
+        await loadModels();
+        const warnTxt = (res.warnings && res.warnings.length) ? ` (提示: ${res.warnings.join('; ')})` : '';
+        notify(`策略导入成功: ${(res.applied || []).join('、')}${warnTxt}`);
+        closeStrategyModal();
+      } catch (e) {
+        strategyModal.error = e.message || '导入失败';
+      } finally {
+        strategyModal.importing = false;
+      }
+    }
+
+    async function rollbackStrategy() {
+      if (!confirm('确认撤回至上次导入前的策略快照？')) return;
+      try {
+        const res = await api('/api/strategy/rollback', { method: 'POST' });
+        if (res.risk_config) Object.assign(riskForm, res.risk_config);
+        if (res.auto_train_config) Object.assign(autoTrainForm, res.auto_train_config);
+        await loadModels();
+        notify(`已撤回至导入前策略 (${res.active_version_id})`);
+      } catch (e) {
+        notify(e.message, 'error');
+      }
+    }
+
     const ARM_LABELS = {
       MAKER_BID_0_TTL6S: '买一·6s',
       MAKER_BID_1_TTL4S: '买一+1¢·5s',
       MAKER_BID_1_TTL2S: '买一+1¢·2s',
       MAKER_MID_TTL3S: '中价·4s',
-      TAKER_FAST: '市价·1.5s',
-      ARB_LOCK_MAKER: '锁利·5s',
+      TAKER_FAST: '市价·1.5s', FV_LEADER_FAK: 'FV领跑·FAK',
+      ARB_LOCK_MAKER: '锁利·5s', ARB_LOCK_TAKER: '锁利·FAK',
       TWAP_SNIPER_MAKER: 'TWAP挂单',
       TWAP_SNIPER_TAKER: 'TWAP吃单',
     };
-    const STATUS_LABELS = { PENDING: '挂单中', FILLED: '已成交', CANCELLED: '撤单', SETTLED: '已结算', CLOSED: '提前平仓', UNVERIFIED: '作废' };
+    const STATUS_LABELS = { SUBMITTING: '提交中', CONFIRMING: '确权中', PENDING: '挂单中', FILLED: '已成交', CANCELLED: '撤单', SETTLED: '已结算', CLOSED: '提前平仓', FAILED: '链上失败', REJECTED: '已拒单', UNVERIFIED: '作废' };
     const MODE_LABELS = { PAPER: '模拟', LIVE: '实盘', SHADOW: '影子', PAUSED: '暂停' };
     const REGIME_LABELS = { WARMING_UP: '预热中', TRENDING: '单边趋势', CHOPPY: '震荡盘整', EXTREME_SPIKE: '极端插针', LATE_TWAP_LOCK: '尾盘锁定' };
     const FEATURE_LABELS = {
@@ -1819,8 +2388,45 @@ createApp({
       if (s === 'CLOSED') return (exitReason && exitReason.includes('止损')) ? 'text-rose-400' : 'text-emerald-400';
       if (s === 'SETTLED') return 'text-emerald-400';
       if (s === 'FILLED') return 'text-sky-400';
-      if (s === 'UNVERIFIED') return 'text-amber-400';
-      return 'text-slate-300';
+      if (s === 'CONFIRMING' || s === 'SUBMITTING' || s === 'PENDING' || s === 'UNVERIFIED') return 'text-amber-400';
+      if (s === 'FAILED' || s === 'REJECTED') return 'text-rose-400';
+      return 'text-slate-400';
+    }
+    function fmtOrderFunds(o) {
+      if (!o || o.bal_before == null) return '--';
+      const b0 = Number(o.bal_before).toFixed(2);
+      const bEnd = o.bal_after_settle != null ? Number(o.bal_after_settle).toFixed(2)
+        : (o.bal_after_entry != null ? Number(o.bal_after_entry).toFixed(2) : '--');
+      return `$${b0}→${bEnd === '--' ? '--' : ('$' + bEnd)}`;
+    }
+    function fmtSettledBal(o) {
+      if (!o) return '--';
+      const v = o.settled_balance ?? (['SETTLED', 'CLOSED'].includes(o.status) ? (o.bal_after_settle ?? o.balance_after) : null);
+      if (v == null || !Number.isFinite(Number(v))) return '--';
+      return '$' + Number(v).toFixed(2);
+    }
+    function fmtRecon(o) {
+      const s = o && o.recon_status;
+      if (s === 'OK') return '✓ 吻合';
+      if (s === 'MISMATCH') return '✗ 异常';
+      if (s === 'WARN') {
+        const d = Number(o.recon_diff || 0);
+        return `△ ${d >= 0 ? '+' : ''}${d.toFixed(2)}`;
+      }
+      if (s === 'PENDING') return '核对中';
+      return '';
+    }
+    function reconColor(s) {
+      if (s === 'OK') return 'text-emerald-400';
+      if (s === 'MISMATCH') return 'text-rose-400';
+      if (s === 'WARN') return 'text-amber-400';
+      return 'text-slate-400';
+    }
+    function reconBadge(s) {
+      if (s === 'OK') return 'bg-emerald-500/15 text-emerald-300';
+      if (s === 'MISMATCH') return 'bg-rose-500/20 text-rose-300 font-semibold';
+      if (s === 'WARN') return 'bg-amber-500/15 text-amber-300';
+      return 'bg-slate-800 text-slate-400';
     }
     function fmtCountdown(targetTs) {
       if (!targetTs) return '--';
@@ -1878,9 +2484,17 @@ createApp({
     function feedTooltip(key) {
       const f = (state.feeds && state.feeds[key]) || {};
       const err = feedFaultReason(key);
-      if (key === 'rtds') return `预言机 TWAP: ${f.last_twap60 || '--'} | ${Math.round(f.latency_ms || 0)}ms${err ? ' · 故障: ' + err : ''}`;
+      if (key === 'rtds') {
+        const te = (state.feeds && state.feeds.twap_err) || {};
+        const teStr = te.samples ? ` | 兜底误差:${te.mean_usd >= 0 ? '+' : ''}${te.mean_usd}$` : '';
+        return `预言机 TWAP: ${f.last_twap60 || '--'} | ${Math.round(f.latency_ms || 0)}ms${teStr}${err ? ' · 故障: ' + err : ''}`;
+      }
       if (key === 'polybolt') return `API源 TWAP: ${f.last_twap60 || '--'}${err ? ' · ' + err : ''}`;
-      if (key === 'clob') return `盘口更新: ${Math.round(f.book_age_sec || 0)}s前 | 错误: ${f.errors || 0}${err ? ' · ' + err : ''}`;
+      if (key === 'clob') {
+        const dly = f.last_delay_ms != null ? `${Math.round(f.last_delay_ms)}ms` : '--';
+        const pre = f.presubscribed ? ' | 已预订下场' : '';
+        return `盘口: ${Math.round(f.book_age_sec || 0)}s前 | 延迟:${dly} | 步长:${f.tick_size || 0.01} | 校验:${f.mismatches || 0}${pre}${err ? ' · ' + err : ''}`;
+      }
       if (key === 'gamma') return `场次延迟: ${Math.round(f.latency_ms || 0)}ms | 错误: ${f.errors || 0}${err ? ' · 故障: ' + err : ''}`;
       if (key === 'binance') return `币安现货: $${f.last_price || '--'} | ${Math.round(f.latency_ms || 0)}ms${err ? ' · 故障: ' + err : ''}`;
       if (key === 'binance_perp') return `币安永续: $${f.last_price || '--'} | ${Math.round(f.latency_ms || 0)}ms${err ? ' · 故障: ' + err : ''}`;
@@ -1981,12 +2595,12 @@ createApp({
 
     return {
       authenticated, isDefaultPassword, loginPassword, loggingIn, wsConnected, activeTab, tabs, state, toast,
-      orderFilter, hideCancelled, orders, visibleOrders, modelVersions, riskForm, walletForm, pwdForm, webhookForm, autoTrainForm,
+      orderFilter, ledgerStats, ledgerAudit, hideCancelled, showSettledZero, orders, visibleOrders, markedOpenPositions, hiddenSettledZeroCount, livePusdBalance, livePortfolioValue, liveTotalEquity, activeBalance, liveBalanceTooltip, modelVersions, riskForm, walletForm, pwdForm, webhookForm, autoTrainForm, strategyBackup, strategyFileInput, strategyModal,
       mobileTelemetryOpen, expandedOrderId, showBlockDetail, rightChartMode, setRightChartMode, feedHealthSummary, feedFaults, feedTooltip, inspectFeed,
-      doLogin, doLogout, switchTab, setMode, resetPaper, resetBreaker, saveRisk, loadTradingData,
-      triggerTrain, loadModels, promoteModel, saveWallet, deriveApi, genObserver, refreshBalance,
-      changePwd, saveWebhook, resetLearning, resetDataset, saveAutoTrain,
-      fmtArm, fmtStatus, fmtMode, fmtRegime, fmtFeature, fmtRole, fmtIvState, fmtCents, fmtExitArm, fmtSubStrat, zoneStat, fmtDynEdge, fmtBias,
+      doLogin, doLogout, switchTab, setMode, togglePause, resetPaper, resetBreaker, saveRisk, onToggleStrict5s, fmtFvExitShort, loadTradingData,
+      triggerTrain, loadModels, promoteModel, detectWallet, cancelAllLive, cancelSingleLive, reconcileLive, saveWallet, deriveApi, genObserver, refreshBalance,
+      changePwd, saveWebhook, resetLearning, resetDataset, saveAutoTrain, openStrategyModal, closeStrategyModal, doExportStrategy, triggerStrategyFilePick, onStrategyFileSelected, doImportStrategy, rollbackStrategy,
+      fmtArm, fmtStatus, fmtMode, fmtOrderFunds, fmtSettledBal, fmtRecon, reconColor, reconBadge, fmtRegime, fmtFeature, fmtRole, fmtIvState, fmtCents, fmtExitArm, fmtSubStrat, zoneStat, fmtDynEdge, fmtBias,
       ivStateBadge, ivRatioColor, statusColor, fmtCountdown, dotClass, clobDotClass, ringDash, ringColor, fmtSpeed, fmtBytesMB, fmtUptime, fmtTime, fmtRoundWindow, fmtBlockSummary, checkClockNow,
     };
   }

@@ -78,11 +78,45 @@ else
   cd "$INSTALL_DIR"
 fi
 
-echo "[3/6] 检查 Python 虚拟环境与依赖..."
+echo "[3/6] 检查 Python 3.11+ 虚拟环境与官方 SDK 依赖..."
 VENV_CREATED=0
+
+# polymarket-client 官方 SDK 需要 Python 3.11+；优先复用系统 3.11/3.12，不足时自动通过 uv 创建独立 Python 3.12 环境
+NEED_NEW_VENV=0
 if [ ! -x "$INSTALL_DIR/.venv/bin/python" ]; then
-  echo "  -> 初始化 Python 虚拟环境..."
-  python3 -m venv "$INSTALL_DIR/.venv"
+  NEED_NEW_VENV=1
+else
+  VENV_VER_OK=$("$INSTALL_DIR/.venv/bin/python" -c "import sys; print(1 if sys.version_info >= (3, 11) else 0)" 2>/dev/null || echo 0)
+  if [ "$VENV_VER_OK" != "1" ]; then
+    echo "  -> 检测到旧 .venv Python 版本低于 3.11，自动重建为 Python 3.12 环境以支持 polymarket-client SDK..."
+    rm -rf "$INSTALL_DIR/.venv"
+    NEED_NEW_VENV=1
+  fi
+fi
+
+if [ "$NEED_NEW_VENV" = "1" ]; then
+  PY_BIN=""
+  for cand in python3.12 python3.11 python3; do
+    if command -v "$cand" >/dev/null 2>&1; then
+      if "$cand" -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" 2>/dev/null; then
+        PY_BIN="$cand"
+        break
+      fi
+    fi
+  done
+
+  if [ -n "$PY_BIN" ]; then
+    echo "  -> 使用系统 $PY_BIN 创建虚拟环境..."
+    "$PY_BIN" -m venv "$INSTALL_DIR/.venv"
+  else
+    echo "  -> 系统 Python 低于 3.11，自动安装轻量 uv 并下载独立 Python 3.12 (不影响系统 Python)..."
+    export PATH="$HOME/.local/bin:/root/.local/bin:$PATH"
+    if ! command -v uv >/dev/null 2>&1; then
+      curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null
+      export PATH="$HOME/.local/bin:/root/.local/bin:$PATH"
+    fi
+    uv venv --python 3.12 --seed "$INSTALL_DIR/.venv"
+  fi
   VENV_CREATED=1
 fi
 
@@ -158,6 +192,10 @@ if [ "$UNIT_CHANGED" = "1" ]; then
   systemctl daemon-reload
   systemctl enable "${SERVICE_NAME}" >/dev/null 2>&1 || true
 fi
+# Ensure zero stray/orphaned uvicorn processes outside systemd (prevents same-round double orders!)
+systemctl stop "${SERVICE_NAME}" 2>/dev/null || true
+pkill -f "uvicorn backend.main:app" 2>/dev/null || true
+sleep 1
 systemctl restart "${SERVICE_NAME}"
 sleep 1.5
 

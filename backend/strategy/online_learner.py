@@ -305,11 +305,19 @@ class SelfLearningCoordinator:
         arr = self.state.get("recent_brier") or [0.20]
         return round(sum(arr) / len(arr), 4)
 
-    def select_exit_arm(self, entry_strategy: str, regime: str, elapsed_sec: int) -> str:
+    def select_exit_arm(
+        self,
+        entry_strategy: str,
+        regime: str,
+        elapsed_sec: int,
+        allow_arb_lock: bool = True,
+    ) -> str:
         """
         Gaussian Thompson Sampling over the 4 mutually-exclusive Exit Strategy Arms.
         - TWAP Sniper always uses HOLD_EXPIRY (designed to collect official T=300s payout).
         - Late entries (>= 230s) prefer HOLD_EXPIRY since little time remains for intraday exit.
+        - When `allow_arb_lock=False` (e.g. LIVE with arb-lock switch OFF), excludes ARB_LOCK_AUTO
+          so the round is assigned an active TP/Hold exit arm instead of wasting exit opportunities.
         """
         if entry_strategy == "twap_sniper" or elapsed_sec >= 230:
             return "HOLD_EXPIRY"
@@ -319,6 +327,8 @@ class SelfLearningCoordinator:
         best_sample = -1e9
         for arm in arms:
             aid = arm["id"]
+            if not allow_arb_lock and aid == "ARB_LOCK_AUTO":
+                continue
             cnt = max(1.0, float(arm.get("count", 2.0)))
             var = max(0.001, float(arm.get("m2", 0.03)) / cnt)
             std = math.sqrt(var / cnt)
@@ -346,6 +356,7 @@ class SelfLearningCoordinator:
         up_book: dict,
         dn_book: dict,
         risk_cfg: dict | None = None,
+        taker_fee_rate_override: Optional[float] = None,
     ) -> Optional[dict]:
         """
         Final-60s TWAP Rule Mispricing Sniper (autonomously governed by sub_strategies['twap_sniper']).
@@ -380,7 +391,8 @@ class SelfLearningCoordinator:
             if signed_z < 0.85 or true_prob < 0.72:
                 continue
 
-            taker_fee_rate = HARD_LIMITS["taker_fee_rate"] * ask * (1.0 - ask)
+            eff_fee_base = HARD_LIMITS["taker_fee_rate"] if taker_fee_rate_override is None else float(taker_fee_rate_override)
+            taker_fee_rate = eff_fee_base * ask * (1.0 - ask)
             taker_edge = true_prob - (ask + taker_fee_rate)
             min_req_edge = 0.075 if diverged else 0.105
 
@@ -428,7 +440,7 @@ class SelfLearningCoordinator:
         """
         if primary_ord.get("status") != "FILLED":
             return None
-        if primary_ord.get("arm_id") in ("ARB_LOCK_MAKER", "TWAP_SNIPER_MAKER", "TWAP_SNIPER_TAKER"):
+        if primary_ord.get("arm_id") in ("ARB_LOCK_MAKER", "ARB_LOCK_TAKER", "TWAP_SNIPER_MAKER", "TWAP_SNIPER_TAKER"):
             return None
 
         exit_arm = str(primary_ord.get("exit_arm") or "HOLD_EXPIRY")
@@ -644,10 +656,12 @@ class SelfLearningCoordinator:
         is_strong_trend: bool,
         recent_cancel_same_side: bool = False,
         best_ask: float = 0.5,
+        taker_fee_rate_override: Optional[float] = None,
     ) -> dict:
         taker_arm = next((a for a in self.state["arms"] if a.get("is_taker")), None)
         p_ask = max(0.05, min(0.95, best_ask))
-        taker_fee_est = HARD_LIMITS["taker_fee_rate"] * p_ask * (1.0 - p_ask)
+        eff_fee_base = HARD_LIMITS["taker_fee_rate"] if taker_fee_rate_override is None else float(taker_fee_rate_override)
+        taker_fee_est = eff_fee_base * p_ask * (1.0 - p_ask)
         net_taker_edge = edge - taker_fee_est
 
         if taker_arm and ((edge >= 0.105 and net_taker_edge >= 0.065) or (recent_cancel_same_side and net_taker_edge >= 0.055)):
@@ -758,6 +772,44 @@ class SelfLearningCoordinator:
             "min_edge": min_edge,
         }
 
+    @staticmethod
+    def required_buy_cash(
+        size_usdc: float,
+        entry_price: float,
+        is_taker: bool,
+        taker_fee_rate: Optional[float] = None,
+        safety_pad_usdc: float = 0.02,
+    ) -> float:
+        """
+        Exact Polymarket CLOB V2 total pUSD cash required to execute a BUY order of `size_usdc`:
+        - Taker: size_usdc * (1 + fee_rate * (1 - p)) + safety_pad (verified to $0.0001 against Polymarket CSV)
+        - Maker: size_usdc + safety_pad (0% maker fee)
+        """
+        sz = max(0.0, float(size_usdc))
+        if sz <= 0.0:
+            return 0.0
+        p = max(0.01, min(0.99, float(entry_price)))
+        eff_fee = HARD_LIMITS["taker_fee_rate"] if taker_fee_rate is None else max(0.0, float(taker_fee_rate))
+        fee_mult = (1.0 + eff_fee * (1.0 - p)) if is_taker else 1.0
+        return round(sz * fee_mult + max(0.0, float(safety_pad_usdc)), 4)
+
+    @staticmethod
+    def max_affordable_notional(
+        available_cash_usdc: float,
+        entry_price: float,
+        is_taker: bool,
+        taker_fee_rate: Optional[float] = None,
+        safety_pad_usdc: float = 0.02,
+    ) -> float:
+        """Maximum BUY notional (`size_usdc`) safely affordable within `available_cash_usdc` after fees & rounding."""
+        avail = float(available_cash_usdc) - max(0.0, float(safety_pad_usdc))
+        if avail <= 0.0:
+            return 0.0
+        p = max(0.01, min(0.99, float(entry_price)))
+        eff_fee = HARD_LIMITS["taker_fee_rate"] if taker_fee_rate is None else max(0.0, float(taker_fee_rate))
+        fee_mult = (1.0 + eff_fee * (1.0 - p)) if is_taker else 1.0
+        return round(max(0.0, math.floor((avail / fee_mult) * 100.0) / 100.0), 2)
+
     def calculate_position_size(
         self,
         bankroll_usdc: float,
@@ -769,8 +821,12 @@ class SelfLearningCoordinator:
         iv_state: str = "FAIR",
         is_buying_itm: bool = False,
         is_twap_sniper: bool = False,
+        taker_fee_rate_override: Optional[float] = None,
+        spendable_cash_usdc: Optional[float] = None,
+        min_shares: float = 1.0,
     ) -> float:
-        fee_per_share = HARD_LIMITS["taker_fee_rate"] * entry_price * (1.0 - entry_price) if is_taker else 0.0
+        eff_fee_base = HARD_LIMITS["taker_fee_rate"] if taker_fee_rate_override is None else float(taker_fee_rate_override)
+        fee_per_share = eff_fee_base * entry_price * (1.0 - entry_price) if is_taker else 0.0
         eff_cost = entry_price + fee_per_share
         edge = model_win_prob - eff_cost
 
@@ -790,16 +846,29 @@ class SelfLearningCoordinator:
         else:
             size_scale = 1.0
 
-        base_unit = max(HARD_LIMITS["min_unit_usdc"], float(risk_cfg.get("unit_size_usdc", 10.0)))
-        max_cap = max(HARD_LIMITS["min_unit_usdc"], bankroll_usdc * HARD_LIMITS["max_position_pct"])
+        min_share_notional = round(max(0.0, float(min_shares)) * max(0.01, float(entry_price)) + 0.01, 2)
+        min_notional = max(HARD_LIMITS["min_unit_usdc"], min_share_notional)
+
+        base_unit = max(min_notional, float(risk_cfg.get("unit_size_usdc", 10.0)))
+        max_cap = max(min_notional, float(bankroll_usdc) * HARD_LIMITS["max_position_pct"])
         # Autonomous Dynamic Fractional Kelly capped gently by user's unit_size_usdc ceiling (up to 1.8x base_unit)
         full_kelly = edge / max(0.05, 1.0 - eff_cost)
         brier = self.get_rolling_brier()
         kelly_mult = max(0.08, min(0.35, 0.55 - brier * 1.6))
-        kelly_size = bankroll_usdc * full_kelly * kelly_mult * size_scale
-        user_cap = min(max_cap, max(base_unit * 1.8, HARD_LIMITS["min_unit_usdc"]))
-        clamped = max(HARD_LIMITS["min_unit_usdc"], min(kelly_size, user_cap))
-        return round(clamped, 2)
+        kelly_size = float(bankroll_usdc) * full_kelly * kelly_mult * size_scale
+        user_cap = min(max_cap, max(base_unit * 1.8, min_notional))
+        target = max(min_notional, min(kelly_size, user_cap))
+
+        # Hard spendable-cash cap (accounting for dynamic taker fee & rounding pad!)
+        if spendable_cash_usdc is not None:
+            affordable = self.max_affordable_notional(
+                spendable_cash_usdc, entry_price, is_taker, eff_fee_base
+            )
+            if affordable < min_notional:
+                return 0.0
+            target = min(target, affordable)
+
+        return round(target, 2)
 
     def _simulate_counterfactual_exit_rois(
         self,
@@ -925,7 +994,7 @@ class SelfLearningCoordinator:
         decay = 0.97
         for ord_row in settled_orders:
             arm_id = ord_row.get("arm_id")
-            if arm_id in ("ARB_LOCK_MAKER", "TWAP_SNIPER_MAKER", "TWAP_SNIPER_TAKER"):
+            if arm_id in ("ARB_LOCK_MAKER", "ARB_LOCK_TAKER", "TWAP_SNIPER_MAKER", "TWAP_SNIPER_TAKER"):
                 continue
             size = float(ord_row.get("size_usdc") or 1.0)
             pnl = float(ord_row.get("pnl_usdc") or 0.0)
@@ -991,7 +1060,7 @@ class SelfLearningCoordinator:
             touched_zones = set()
             for ord_row in settled_orders:
                 arm_id = ord_row.get("arm_id")
-                if arm_id in ("ARB_LOCK_MAKER", "TWAP_SNIPER_MAKER", "TWAP_SNIPER_TAKER"):
+                if arm_id in ("ARB_LOCK_MAKER", "ARB_LOCK_TAKER", "TWAP_SNIPER_MAKER", "TWAP_SNIPER_TAKER"):
                     continue
                 if ord_row.get("status") not in ("SETTLED", "CLOSED") or ord_row.get("fill_price") is None:
                     continue
@@ -1058,12 +1127,12 @@ class SelfLearningCoordinator:
         # 4. Counterfactual Exit-Arm Evolution (Realized Exit Alpha + 5s Slice Counterfactual Replay)
         exit_arms = self.state.get("exit_arms") or []
         exit_arm_map = {a["id"]: a for a in exit_arms}
-        arb_orders = [o for o in settled_orders if o.get("arm_id") == "ARB_LOCK_MAKER" and o.get("status") == "SETTLED"]
+        arb_orders = [o for o in settled_orders if o.get("arm_id") in ("ARB_LOCK_MAKER", "ARB_LOCK_TAKER") and o.get("status") == "SETTLED"]
         arb_by_mode = {o["mode"]: o for o in arb_orders}
 
         for ord_row in settled_orders:
             arm_id = ord_row.get("arm_id")
-            if arm_id in ("ARB_LOCK_MAKER", "TWAP_SNIPER_MAKER", "TWAP_SNIPER_TAKER"):
+            if arm_id in ("ARB_LOCK_MAKER", "ARB_LOCK_TAKER", "TWAP_SNIPER_MAKER", "TWAP_SNIPER_TAKER"):
                 continue
             if ord_row.get("status") not in ("SETTLED", "CLOSED") or ord_row.get("fill_price") is None:
                 continue
@@ -1116,7 +1185,7 @@ class SelfLearningCoordinator:
         # 5. Sub-Strategy Autonomous Shadow Hibernation & Wakeup
         subs = self.state.get("sub_strategies") or {}
         for ord_row in settled_orders:
-            if ord_row.get("arm_id") == "ARB_LOCK_MAKER":
+            if ord_row.get("arm_id") in ("ARB_LOCK_MAKER", "ARB_LOCK_TAKER"):
                 continue
             if ord_row.get("status") not in ("SETTLED", "CLOSED") or ord_row.get("fill_price") is None:
                 continue

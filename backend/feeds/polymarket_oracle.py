@@ -1,81 +1,105 @@
 import asyncio
 import json
+import math
 import time
+from collections import deque
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Callable, Optional
 import aiohttp
 import websockets
 
+from backend.config import (
+    CLOB_API_BASE,
+    CRYPTO_PRICE_API,
+    GAMMA_API_BASE,
+    GEOBLOCK_URL,
+    HARD_LIMITS,
+    PAST_RESULTS_API,
+    POLYBOLT_WS_URL,
+    POLY_HEADERS,
+    POLY_PROXY,
+    RTDS_WS_URL,
+    ws_headers_kwarg,
+)
 from backend.fast_json import loads as fast_loads
-from backend.config import CLOB_API_BASE, GAMMA_API_BASE, POLYBOLT_WS_URL, RTDS_WS_URL
+from backend.feeds.clock import ServerClock
 
 
 class PolymarketOracleSync:
     """
-    100% Real Polymarket Official Truth Source (Dual-Stream Auto-Failover):
-    1. Public Polymarket RTDS (wss://ws-live-data.polymarket.com):
-       - Zero credentials required! Connects immediately on startup.
-       - Subscribes with exact compact JSON filters to `crypto_prices_chainlink` & `crypto_prices_twap_sixty`.
-       - Converts E18 fixed-point `full_accuracy_value` to exact Decimal.
-    2. Authenticated Polymarket PolyBolt (wss://ws-live-v2.polymarket.com/ws):
-       - Automatically activates as primary source when CLOB API credentials are configured.
-       - Uses official nested auth frame, waits for ack, then subscribes to `price.crypto` & `price.crypto.twap` (60s).
-    3. Gamma API (gamma-api.polymarket.com):
-       - Discovers real 5m BTC rounds (`btc-updown-5m-{ts}`), locks official `priceToBeat` / `finalPrice`,
-         and confirms official settlement outcome (`UP` / `DOWN`).
+    Polymarket Official Oracle & Four-Source Settlement Engine (v37):
+    1. Primary native official TWAP60 streams: PolyBolt (`price.crypto.twap`) + Public RTDS (`crypto_prices_twap_sixty`).
+    2. Local 900s Chainlink spot buffer with `TWAP_LAG_SEC = 2.5` linear interpolation fallback + `twap_err` monitoring.
+    3. Dynamic Gamma metadata parsing: `tick_size`, `min_size`, `fees_enabled`, `taker_fee_rate`, `accepting_orders`, `neg_risk`.
+    4. Official `crypto-price` API (429 exponential backoff 3s->15s) + `past-results` 8-round batch API.
+    5. Four-source parallel official settlement (Gamma + CLOB `/markets/{id}` + `crypto-price` + `past-results`).
+    6. Integrated `ServerClock` fed by WS timestamps, HTTP `Date` headers, and Binance RTT checks.
     """
 
-    def __init__(self, on_oracle_tick: Optional[Callable] = None):
+    TWAP_LAG_SEC = 2.5
+
+    def __init__(self, on_oracle_tick: Optional[Callable] = None, clock: Optional[ServerClock] = None):
         self.on_oracle_tick = on_oracle_tick
+        self.clock = clock or ServerClock()
         self.creds: Optional[dict] = None
         self.latest_spot = Decimal("0")
         self.latest_twap60 = Decimal("0")
         self.latest_spot_float: float = 0.0
         self.latest_twap60_float: float = 0.0
-        self.active_oracle_source: str = "NONE"
+        self.latest_twap_ts: float = 0.0
+        self.active_oracle_source: str = "RTDS"
+
         self.twap_history: list[tuple[float, Decimal]] = []
+        self.spot_history: deque[tuple[int, float]] = deque(maxlen=960)
+        self._twap_errors: deque[float] = deque(maxlen=120)
+
+        self._cp_backoff_sec: float = 3.0
+        self._cp_next_allowed_ts: float = 0.0
+
         self._stop = False
         self._reconnect_polybolt = asyncio.Event()
         self._http_session: Optional[aiohttp.ClientSession] = None
 
         self.status = {
-            "polybolt": {
-                "connected": False,
-                "authenticated": False,
-                "last_spot": "0",
-                "last_twap60": "0",
-                "latency_ms": 0.0,
-                "last_msg_ts": 0.0,
-                "errors": 0,
-                "last_error": "",
-                "note": "未配置API凭证(已自动启用公开RTDS真实预言机流)",
-            },
             "rtds": {
                 "connected": False,
-                "last_spot": "0",
-                "last_twap60": "0",
                 "latency_ms": 0.0,
                 "last_msg_ts": 0.0,
+                "last_spot": "0",
+                "last_twap60": "0",
                 "errors": 0,
                 "last_error": "",
                 "note": "正在连接 Polymarket 公开 Chainlink 60s TWAP 流...",
             },
+            "polybolt": {
+                "connected": False,
+                "authenticated": False,
+                "latency_ms": 0.0,
+                "last_msg_ts": 0.0,
+                "last_spot": "0",
+                "last_twap60": "0",
+                "errors": 0,
+                "last_error": "",
+                "note": "未配置API凭证(已自动使用公开RTDS真实流)",
+            },
             "gamma": {"connected": False, "latency_ms": 0.0, "last_msg_ts": 0.0, "errors": 0, "last_error": ""},
             "geo_check": {"checked": False, "blocked": False, "country": "UNKNOWN", "clock_drift_ms": 0.0},
+            "twap_err": {"samples": 0, "mean_usd": 0.0, "max_abs_usd": 0.0},
         }
 
     def set_credentials(self, api_key: str, secret: str, passphrase: str):
         if api_key and secret and passphrase:
-            self.creds = {
-                "apiKey": api_key,
-                "secret": secret,
-                "passphrase": passphrase,
-            }
-            self.status["polybolt"]["note"] = "凭证已加载，正在认证 PolyBolt..."
+            self.creds = {"apiKey": api_key, "secret": secret, "passphrase": passphrase}
+            self.status["polybolt"]["note"] = "正在认证 PolyBolt 主流..."
             self._reconnect_polybolt.set()
         else:
             self.creds = None
-            self.status["polybolt"]["note"] = "未配置API凭证(使用公开RTDS真实预言机流)"
+            self.status["polybolt"].update({
+                "connected": False,
+                "authenticated": False,
+                "note": "未配置API凭证(已自动使用公开RTDS真实流)",
+            })
 
     def stop(self):
         self._stop = True
@@ -83,14 +107,8 @@ class PolymarketOracleSync:
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._http_session is None or self._http_session.closed:
-            connector = aiohttp.TCPConnector(limit=16, ttl_dns_cache=300, enable_cleanup_closed=True)
-            self._http_session = aiohttp.ClientSession(
-                connector=connector,
-                headers={
-                    "Cache-Control": "no-cache, no-store, must-revalidate",
-                    "Pragma": "no-cache",
-                },
-            )
+            connector = aiohttp.TCPConnector(limit=12, ttl_dns_cache=300)
+            self._http_session = aiohttp.ClientSession(connector=connector, headers=POLY_HEADERS)
         return self._http_session
 
     async def close(self):
@@ -101,32 +119,82 @@ class PolymarketOracleSync:
                 pass
             self._http_session = None
 
+    def get_window_ts(self, now: Optional[float] = None) -> int:
+        t = self.clock.server_now() if now is None else float(now)
+        return int(t // 300) * 300
+
     @staticmethod
-    def get_window_ts(now: Optional[float] = None) -> int:
-        ts = int(now or time.time())
-        return (ts // 300) * 300
+    def _iso_utc(ts: int) -> str:
+        return datetime.fromtimestamp(int(ts), tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def _add_spot_point(self, ev_sec: float, price_f: float):
+        sec_i = int(round(ev_sec))
+        if sec_i <= 0 or price_f <= 0:
+            return
+        if self.spot_history:
+            last_sec, _ = self.spot_history[-1]
+            if sec_i < last_sec:
+                return
+            if sec_i == last_sec:
+                self.spot_history[-1] = (sec_i, price_f)
+                return
+        self.spot_history.append((sec_i, price_f))
+
+    def calc_local_twap(self, t_sec: float, lookback: int = 60) -> Optional[Decimal]:
+        if len(self.spot_history) < max(10, lookback - 2):
+            return None
+        target_end = float(t_sec) - self.TWAP_LAG_SEC
+        end_lo = math.floor(target_end)
+        frac = target_end - end_lo
+        end_hi = end_lo + 1
+
+        def _window_avg(end_i: int) -> Optional[float]:
+            start_i = end_i - lookback
+            vals = [v for ts, v in self.spot_history if start_i <= ts < end_i]
+            if len(vals) < max(5, lookback - 2):
+                return None
+            return sum(vals) / len(vals)
+
+        avg_lo = _window_avg(end_lo)
+        avg_hi = _window_avg(end_hi)
+        if avg_lo is not None and avg_hi is not None:
+            est = avg_lo * (1.0 - frac) + avg_hi * frac
+        elif avg_lo is not None:
+            est = avg_lo
+        elif avg_hi is not None:
+            est = avg_hi
+        else:
+            return None
+        return Decimal(f"{est:.2f}")
+
+    def get_effective_twap60(self, now_sec: Optional[float] = None) -> Decimal:
+        t = self.clock.server_now() if now_sec is None else float(now_sec)
+        if self.latest_twap60 > 0 and (t - self.latest_twap_ts) <= 15.0:
+            return self.latest_twap60
+        local_est = self.calc_local_twap(t, lookback=60)
+        if local_est is not None and local_est > 0:
+            return local_est
+        return self.latest_twap60
 
     def get_twap_at_boundary_detail(self, target_ts: int, max_delta_sec: float = 15.0) -> tuple[Optional[Decimal], float]:
-        """
-        Find closest real Polymarket 60s TWAP tick around exact window boundary timestamp.
-        On ties or near-ties, slightly prefers the tick at/just after target_ts (matching official boundary).
-        Returns (price, abs_delta_sec).
-        """
         if not self.twap_history:
-            return None, 999.0
-        best_score = max_delta_sec + 10.0
-        best_dt = 999.0
+            est = self.calc_local_twap(float(target_ts), lookback=60)
+            return (est, 3.0) if est is not None else (None, 999.0)
         best_px = None
+        best_dt = 1e9
+        best_score = 1e9
         for ts, px in self.twap_history:
             dt = abs(ts - target_ts)
             if dt <= max_delta_sec:
-                # Slight preference (0.15s) for tick >= target_ts over tick < target_ts
-                score = dt + (0.15 if ts < target_ts else 0.0)
+                score = dt - (0.15 if ts >= target_ts else 0.0)
                 if score < best_score:
                     best_score = score
                     best_dt = dt
                     best_px = px
-        return best_px, best_dt
+        if best_px is not None:
+            return best_px, best_dt
+        est = self.calc_local_twap(float(target_ts), lookback=60)
+        return (est, 3.0) if est is not None else (None, 999.0)
 
     def get_twap_at_boundary(self, target_ts: int, max_delta_sec: float = 15.0) -> Optional[Decimal]:
         px, _ = self.get_twap_at_boundary_detail(target_ts, max_delta_sec=max_delta_sec)
@@ -134,73 +202,84 @@ class PolymarketOracleSync:
 
     @staticmethod
     def _parse_dec(val, allow_e18: bool = False) -> Optional[Decimal]:
-        if val is None or str(val).strip() == "":
+        if val is None or val == "":
             return None
         try:
             d = Decimal(str(val))
-            if allow_e18 and d > Decimal("1000000000000"):
-                d = d / Decimal("1000000000000000000")
+            if allow_e18 and d > Decimal("1e12"):
+                d = d / Decimal("1e18")
             return d if d > 0 else None
-        except InvalidOperation:
+        except (InvalidOperation, ValueError):
             return None
 
     @staticmethod
     def _parse_ts_sec(item: dict, default_ts: float) -> float:
-        ev_ts = item.get("timestamp") or item.get("ts") or item.get("t")
-        if ev_ts is None:
-            return default_ts
-        try:
-            v = float(ev_ts)
-            if v > 1e14:
-                return v / 1e6
-            if v > 1e11:
-                return v / 1000.0
-            return v
-        except Exception:
-            return default_ts
+        for k in ("timestamp", "ts", "time"):
+            raw = item.get(k)
+            if raw is not None:
+                try:
+                    v = float(raw)
+                    if v > 1e12:
+                        return v / 1000.0
+                    if v > 1e9:
+                        return v
+                except (TypeError, ValueError):
+                    pass
+        return default_ts
 
     def _record_oracle_price(self, kind: str, price: Decimal, ev_sec: float, source_name: str, is_snapshot: bool):
-        """Update unified real oracle state; prioritize PolyBolt if fresh, otherwise use RTDS seamlessly."""
-        now = time.time()
-        polybolt_fresh = (
-            self.status["polybolt"]["connected"]
-            and (now - float(self.status["polybolt"]["last_msg_ts"])) < 12.0
-        )
-        # If PolyBolt is live and fresh, ignore RTDS updates so we don't flip-flop between streams
-        if source_name == "RTDS" and polybolt_fresh:
+        if source_name == "RTDS" and self.status["polybolt"]["connected"] and (time.time() - self.status["polybolt"]["last_msg_ts"] < 12):
             return
-
         self.active_oracle_source = source_name
+        if not is_snapshot and ev_sec > 1e9:
+            self.clock.observe(ev_sec * 1000.0)
+            self.status["geo_check"]["clock_drift_ms"] = self.clock.drift_ms()
+
         if kind == "spot":
             self.latest_spot = price
             self.latest_spot_float = float(price)
+            self._add_spot_point(ev_sec, float(price))
         elif kind == "twap60":
             self.latest_twap60 = price
             self.latest_twap60_float = float(price)
+            self.latest_twap_ts = ev_sec if ev_sec > 1e9 else time.time()
             self.twap_history.append((ev_sec, price))
             if len(self.twap_history) > 1000:
                 self.twap_history = self.twap_history[-700:]
+            if not is_snapshot:
+                local_est = self.calc_local_twap(ev_sec, lookback=60)
+                if local_est is not None:
+                    err = float(local_est - price)
+                    if abs(err) < 500.0:
+                        self._twap_errors.append(err)
+                        n = len(self._twap_errors)
+                        self.status["twap_err"] = {
+                            "samples": n,
+                            "mean_usd": round(sum(self._twap_errors) / n, 2),
+                            "max_abs_usd": round(max(abs(x) for x in self._twap_errors), 2),
+                        }
 
         if self.on_oracle_tick:
             self.on_oracle_tick(kind, price, ev_sec, is_snapshot, source_name)
 
     async def check_clock_drift(self) -> Optional[float]:
-        """Lightweight RTT-compensated UTC clock drift check against Binance /api/v3/time."""
         try:
             session = await self._get_session()
-            if not session:
-                return None
             t0 = time.time() * 1000.0
-            async with session.get("https://api.binance.com/api/v3/time", timeout=aiohttp.ClientTimeout(total=5)) as resp2:
+            async with session.get(
+                "https://api.binance.com/api/v3/time",
+                proxy=POLY_PROXY or None,
+                timeout=aiohttp.ClientTimeout(total=4),
+            ) as r:
                 t1 = time.time() * 1000.0
-                if resp2.status == 200:
-                    d2 = await resp2.json()
-                    srv_ms = float(d2.get("serverTime", t1))
-                    local_mid_ms = 0.5 * (t0 + t1)
-                    drift = round(local_mid_ms - srv_ms, 1)
-                    self.status["geo_check"]["clock_drift_ms"] = drift
-                    self.status["geo_check"]["clock_checked_at"] = round(t1 / 1000.0, 1)
-                    return drift
+                if r.status == 200:
+                    srv_ms = float((await r.json()).get("serverTime", 0))
+                    if srv_ms > 0:
+                        self.clock.observe_rtt_server_ms(srv_ms, rtt_ms=(t1 - t0))
+                        drift = self.clock.drift_ms()
+                        self.status["geo_check"]["clock_drift_ms"] = drift
+                        self.status["geo_check"]["clock_checked_at"] = round(t1 / 1000.0, 1)
+                        return drift
         except Exception:
             pass
         return None
@@ -208,21 +287,26 @@ class PolymarketOracleSync:
     async def check_geo_and_clock(self):
         try:
             session = await self._get_session()
-            if session:
-                async with session.get("https://polymarket.com/api/geoblock", timeout=aiohttp.ClientTimeout(total=6)) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        self.status["geo_check"].update({
-                            "checked": True,
-                            "blocked": bool(data.get("blocked", False)),
-                            "country": str(data.get("country", "UNKNOWN")),
-                        })
+            t0 = time.time()
+            async with session.get(
+                GEOBLOCK_URL,
+                proxy=POLY_PROXY or None,
+                timeout=aiohttp.ClientTimeout(total=5),
+            ) as r:
+                self.clock.observe_http_date(r.headers.get("Date"), rtt_ms=(time.time() - t0) * 1000.0)
+                if r.status == 200:
+                    data = await r.json()
+                    self.status["geo_check"].update({
+                        "checked": True,
+                        "blocked": bool(data.get("blocked", False)),
+                        "country": data.get("country", "UNKNOWN"),
+                        "ip": data.get("ip", ""),
+                    })
         except Exception:
             pass
         await self.check_clock_drift()
 
     async def fetch_gamma_round(self, window_ts: int, bust_cache: bool = False) -> Optional[dict]:
-        """Fetch real Polymarket 5m BTC event metadata, priceToBeat, finalPrice, token IDs & official outcome."""
         slug = f"btc-updown-5m-{window_ts}"
         t0 = time.time()
         try:
@@ -234,11 +318,15 @@ class PolymarketOracleSync:
                 {"slug": slug, "closed": "true", **({"_t": cb_val} if cb_val else {})},
             ]
             for params in param_variants:
+                req_t0 = time.time()
                 async with session.get(
                     f"{GAMMA_API_BASE}/events",
                     params=params,
+                    proxy=POLY_PROXY or None,
                     timeout=aiohttp.ClientTimeout(total=5),
                 ) as resp:
+                    rtt_ms = (time.time() - req_t0) * 1000.0
+                    self.clock.observe_http_date(resp.headers.get("Date"), rtt_ms=rtt_ms)
                     lat = round((time.time() - t0) * 1000.0, 1)
                     if resp.status != 200:
                         self.status["gamma"]["last_error"] = f"HTTP {resp.status}"
@@ -261,7 +349,63 @@ class PolymarketOracleSync:
             price_to_beat = self._parse_dec(meta.get("priceToBeat"))
             final_price = self._parse_dec(meta.get("finalPrice"))
 
-            raw_tokens = market.get("clobTokenIds")
+            tick_size = 0.01
+            try:
+                raw_tick = market.get("orderPriceMinTickSize")
+                if raw_tick not in (None, ""):
+                    tf = float(raw_tick)
+                    if 0.0001 <= tf <= 0.1:
+                        tick_size = round(tf, 4)
+            except (TypeError, ValueError):
+                pass
+
+            min_size = 5.0
+            try:
+                raw_ms = market.get("orderMinSize")
+                if raw_ms not in (None, ""):
+                    msf = float(raw_ms)
+                    if msf > 0:
+                        min_size = round(msf, 2)
+            except (TypeError, ValueError):
+                pass
+
+            fees_enabled_raw = market.get("feesEnabled")
+            taker_fee_rate = float(HARD_LIMITS["taker_fee_rate"])
+            if fees_enabled_raw is False:
+                taker_fee_rate = 0.0
+            else:
+                sched = market.get("feeSchedule") or {}
+                if isinstance(sched, str):
+                    try:
+                        sched = json.loads(sched)
+                    except Exception:
+                        sched = {}
+                if isinstance(sched, dict) and sched.get("rate") not in (None, ""):
+                    try:
+                        r_f = float(sched["rate"])
+                        if 0.0 <= r_f <= 0.25:
+                            taker_fee_rate = r_f
+                    except (TypeError, ValueError):
+                        pass
+
+            accepting_orders = True if market.get("acceptingOrders") is None else bool(market.get("acceptingOrders"))
+            neg_risk = bool(market.get("negRisk") or event.get("negRisk") or False)
+            raw_ver = market.get("version") if market.get("version") not in (None, "") else event.get("version")
+            if str(raw_ver or "").strip().lower() in ("2", "v2"):
+                market_version = 2
+            elif market.get("positionIds") and not market.get("clobTokenIds"):
+                market_version = 2
+            else:
+                market_version = 1
+            twap_lookback = 60
+            cmc = market.get("cryptoMarketConfig") or event.get("cryptoMarketConfig") or {}
+            if isinstance(cmc, dict) and cmc.get("twapLookbackSeconds"):
+                try:
+                    twap_lookback = max(10, int(cmc["twapLookbackSeconds"]))
+                except (TypeError, ValueError):
+                    pass
+
+            raw_tokens = market.get("clobTokenIds") or market.get("positionIds")
             if isinstance(raw_tokens, str):
                 raw_tokens = json.loads(raw_tokens)
 
@@ -281,7 +425,6 @@ class PolymarketOracleSync:
             if not isinstance(outcomes, list) or len(outcomes) != 2:
                 outcomes = ["Up", "Down"]
 
-            # Explicitly map clobTokenIds by matching outcomes label ("UP" / "DOWN")
             up_token = None
             down_token = None
             if raw_tokens and len(raw_tokens) >= 2:
@@ -316,6 +459,14 @@ class PolymarketOracleSync:
                 "final_price": final_price,
                 "closed": is_closed,
                 "resolved_outcome": resolved_outcome,
+                "tick_size": tick_size,
+                "min_size": min_size,
+                "fees_enabled": (fees_enabled_raw is not False),
+                "taker_fee_rate": taker_fee_rate,
+                "accepting_orders": accepting_orders,
+                "neg_risk": neg_risk,
+                "market_version": market_version,
+                "twap_lookback": twap_lookback,
             }
         except Exception as e:
             self.status["gamma"]["connected"] = False
@@ -323,8 +474,106 @@ class PolymarketOracleSync:
             self.status["gamma"]["last_error"] = "接口超时" if isinstance(e, asyncio.TimeoutError) else (str(e)[:48] or type(e).__name__)
             return None
 
+    async def fetch_crypto_price(self, window_ts: int, lookback: int = 60) -> Optional[dict]:
+        now = time.time()
+        if now < self._cp_next_allowed_ts:
+            return None
+        try:
+            session = await self._get_session()
+            t0 = time.time()
+            async with session.get(
+                CRYPTO_PRICE_API,
+                params={
+                    "symbol": "BTC",
+                    "eventStartTime": self._iso_utc(window_ts),
+                    "variant": "fiveminute",
+                    "endDate": self._iso_utc(window_ts + 300),
+                    "twapEnabled": "true",
+                    "twapLookbackSeconds": str(int(lookback)),
+                },
+                proxy=POLY_PROXY or None,
+                timeout=aiohttp.ClientTimeout(total=5),
+            ) as resp:
+                self.clock.observe_http_date(resp.headers.get("Date"), rtt_ms=(time.time() - t0) * 1000.0)
+                if resp.status == 429:
+                    self._cp_next_allowed_ts = time.time() + self._cp_backoff_sec
+                    self._cp_backoff_sec = min(15.0, self._cp_backoff_sec * 2.0)
+                    return None
+                if resp.status != 200:
+                    return None
+                self._cp_backoff_sec = 3.0
+                d = await resp.json()
+                open_px = self._parse_dec(d.get("openPrice"))
+                close_px = self._parse_dec(d.get("closePrice"))
+                completed = bool(d.get("completed"))
+                outcome = None
+                if completed and open_px is not None and close_px is not None:
+                    outcome = "UP" if close_px >= open_px else "DOWN"
+                return {
+                    "open_price": open_px,
+                    "close_price": close_px,
+                    "completed": completed,
+                    "outcome": outcome,
+                }
+        except Exception:
+            return None
+
+    async def fetch_past_results(self, base_window_ts: int, count: int = 8) -> dict[int, dict]:
+        slugs = [f"btc-updown-5m-{base_window_ts - i * 300}" for i in range(max(1, count))]
+        try:
+            session = await self._get_session()
+            async with session.get(
+                PAST_RESULTS_API,
+                params={"pastEventSlugs": ",".join(slugs)},
+                proxy=POLY_PROXY or None,
+                timeout=aiohttp.ClientTimeout(total=5),
+            ) as resp:
+                if resp.status != 200:
+                    return {}
+                d = await resp.json()
+                out_map: dict[int, dict] = {}
+                by_slug = d.get("outcomesBySlug") or d.get("resultsBySlug") or {}
+                if isinstance(by_slug, dict):
+                    for slug, val in by_slug.items():
+                        try:
+                            w_ts = int(str(slug).rsplit("-", 1)[-1])
+                        except (TypeError, ValueError):
+                            continue
+                        if isinstance(val, str):
+                            u = val.strip().upper()
+                            if u in ("UP", "DOWN"):
+                                out_map[w_ts] = {"outcome": u, "open_price": None, "close_price": None}
+                        elif isinstance(val, dict):
+                            u = str(val.get("outcome") or val.get("winner") or "").strip().upper()
+                            if u in ("UP", "DOWN"):
+                                out_map[w_ts] = {
+                                    "outcome": u,
+                                    "open_price": self._parse_dec(val.get("openPrice") or val.get("priceToBeat")),
+                                    "close_price": self._parse_dec(val.get("closePrice") or val.get("finalPrice")),
+                                }
+                if isinstance(d.get("results"), list):
+                    for item in d["results"]:
+                        if not isinstance(item, dict):
+                            continue
+                        slug = str(item.get("slug") or "")
+                        if not slug.startswith("btc-updown-5m-"):
+                            continue
+                        try:
+                            w_ts = int(slug.rsplit("-", 1)[-1])
+                        except ValueError:
+                            continue
+                        u = str(item.get("outcome") or item.get("winner") or "").strip().upper()
+                        if u in ("UP", "DOWN"):
+                            out_map[w_ts] = {
+                                "outcome": u,
+                                "open_price": self._parse_dec(item.get("openPrice")),
+                                "close_price": self._parse_dec(item.get("closePrice")),
+                            }
+                return out_map
+        except Exception:
+            return {}
+
     async def fetch_clob_winner(self, condition_id: Optional[str]) -> Optional[str]:
-        """Fast official confirmation via Polymarket CLOB /markets/{condition_id} tokens[].winner (often faster than Gamma CDN)."""
         if not condition_id:
             return None
         try:
@@ -332,6 +581,7 @@ class PolymarketOracleSync:
             async with session.get(
                 f"{CLOB_API_BASE}/markets/{condition_id}",
                 params={"_t": str(int(time.time() * 1000))},
+                proxy=POLY_PROXY or None,
                 timeout=aiohttp.ClientTimeout(total=4),
             ) as resp:
                 if resp.status != 200:
@@ -354,31 +604,31 @@ class PolymarketOracleSync:
         known_condition_id: Optional[str] = None,
         timeout_sec: int = 420,
     ) -> dict:
-        """
-        v13 Accelerated Official Settlement Waiter:
-        - Queries Gamma API (cache-busted) AND CLOB /markets/{condition_id} IN PARALLEL using persistent HTTP keepalive.
-        - Polls every 2.0s during first 60s, then 3.5s.
-        - Strictly NEVER guesses or defaults to DOWN on timeout; returns verified=False if unresolved.
-        """
         start_ts = time.time()
         deadline = start_ts + timeout_sec
         boundary_twap = self.get_twap_at_boundary(window_ts + 300, max_delta_sec=10.0)
         settlement_price = boundary_twap if (boundary_twap and boundary_twap > 0) else fallback_twap
         official_ptb = fallback_ptb
         condition_id = known_condition_id
+        poll_idx = 0
 
         while time.time() < deadline and not self._stop:
+            poll_idx += 1
             tasks = [
                 self.fetch_gamma_round(window_ts, bust_cache=True),
                 self.fetch_gamma_round(window_ts + 300, bust_cache=True),
+                self.fetch_crypto_price(window_ts),
+                self.fetch_clob_winner(condition_id) if condition_id else asyncio.sleep(0, result=None),
+                self.fetch_past_results(window_ts, count=8) if (poll_idx % 2 == 0 or poll_idx == 1) else asyncio.sleep(0, result={}),
             ]
-            if condition_id:
-                tasks.append(self.fetch_clob_winner(condition_id))
-
             results = await asyncio.gather(*tasks, return_exceptions=True)
             cur_round = results[0] if isinstance(results[0], dict) else None
             next_round = results[1] if isinstance(results[1], dict) else None
-            clob_winner = results[2] if (len(results) > 2 and isinstance(results[2], str)) else None
+            cp_res = results[2] if isinstance(results[2], dict) else None
+            clob_winner = results[3] if isinstance(results[3], str) else None
+            past_map = results[4] if isinstance(results[4], dict) else {}
+
+            official_outcome = None
 
             if cur_round:
                 if not condition_id and cur_round.get("condition_id"):
@@ -389,40 +639,54 @@ class PolymarketOracleSync:
                     official_ptb = cur_round["price_to_beat"]
                 if cur_round["final_price"] is not None:
                     settlement_price = cur_round["final_price"]
+                if cur_round.get("resolved_outcome") in ("UP", "DOWN"):
+                    official_outcome = cur_round["resolved_outcome"]
 
-            if next_round and next_round["price_to_beat"] is not None and settlement_price <= 0:
-                settlement_price = next_round["price_to_beat"]
+            if next_round and next_round.get("price_to_beat") is not None:
+                if not (cur_round and cur_round.get("final_price") is not None):
+                    settlement_price = next_round["price_to_beat"]
 
-            official_outcome = clob_winner or (cur_round["resolved_outcome"] if cur_round else None)
+            if cp_res:
+                if cp_res.get("open_price") is not None and official_ptb is None:
+                    official_ptb = cp_res["open_price"]
+                if cp_res.get("close_price") is not None:
+                    settlement_price = cp_res["close_price"]
+                if not official_outcome and cp_res.get("outcome") in ("UP", "DOWN"):
+                    official_outcome = cp_res["outcome"]
+
+            if not official_outcome and clob_winner in ("UP", "DOWN"):
+                official_outcome = clob_winner
+
+            if not official_outcome and window_ts in past_map:
+                pr = past_map[window_ts]
+                if pr.get("open_price") is not None and official_ptb is None:
+                    official_ptb = pr["open_price"]
+                if pr.get("close_price") is not None:
+                    settlement_price = pr["close_price"]
+                if pr.get("outcome") in ("UP", "DOWN"):
+                    official_outcome = pr["outcome"]
 
             if official_outcome in ("UP", "DOWN"):
-                # Only wait briefly if we have NO settlement price at all
-                if settlement_price <= 0 and time.time() + 10 < deadline:
-                    await asyncio.sleep(2.0)
-                    retry = await self.fetch_gamma_round(window_ts, bust_cache=True)
-                    if retry and retry["final_price"] is not None:
-                        settlement_price = retry["final_price"]
                 return {
                     "window_ts": window_ts,
-                    "price_to_beat": str(official_ptb.quantize(Decimal("0.01"))) if official_ptb is not None else None,
+                    "price_to_beat": str(official_ptb.quantize(Decimal("0.01"))) if official_ptb is not None else "--",
                     "settlement_price": str(settlement_price.quantize(Decimal("0.01"))) if settlement_price > 0 else "--",
                     "official_outcome": official_outcome,
                     "verified": True,
                 }
 
-            sleep_sec = 2.0 if (time.time() - start_ts) < 60.0 else 3.5
-            await asyncio.sleep(sleep_sec)
+            elapsed_wait = time.time() - start_ts
+            await asyncio.sleep(2.5 if elapsed_wait < 60 else 4.0)
 
         return {
             "window_ts": window_ts,
-            "price_to_beat": str(official_ptb.quantize(Decimal("0.01"))) if official_ptb is not None else None,
+            "price_to_beat": str(official_ptb.quantize(Decimal("0.01"))) if official_ptb is not None else "--",
             "settlement_price": str(settlement_price.quantize(Decimal("0.01"))) if settlement_price > 0 else "--",
             "official_outcome": None,
             "verified": False,
         }
 
     def _extract_items(self, msg: dict) -> list[dict]:
-        """Extract list of price items from both snapshot (payload.data) and live tick (payload) envelopes."""
         payload = msg.get("payload")
         if payload is None:
             payload = msg.get("data")
@@ -439,11 +703,6 @@ class PolymarketOracleSync:
         return []
 
     async def run_rtds(self):
-        """
-        Public Polymarket RTDS WebSocket (wss://ws-live-data.polymarket.com).
-        Requires NO wallet and NO API key — delivers real Chainlink btc/usd spot & 60s TWAP immediately!
-        CRITICAL: filters MUST be compact JSON strings with NO spaces, and client MUST send PING every 5s.
-        """
         compact_filter = json.dumps({"symbol": "btc/usd"}, separators=(",", ":"))
         sub_frame = json.dumps({
             "action": "subscribe",
@@ -455,7 +714,12 @@ class PolymarketOracleSync:
 
         while not self._stop:
             try:
-                async with websockets.connect(RTDS_WS_URL, ping_interval=None, close_timeout=5) as ws:
+                async with websockets.connect(
+                    RTDS_WS_URL,
+                    ping_interval=None,
+                    close_timeout=5,
+                    **ws_headers_kwarg(websockets.connect),
+                ) as ws:
                     await ws.send(sub_frame)
                     self.status["rtds"].update({
                         "connected": True,
@@ -471,52 +735,51 @@ class PolymarketOracleSync:
 
                     ping_task = asyncio.create_task(_rtds_pinger())
                     try:
-                      async for raw in ws:
-                        if self._stop:
-                            break
-                        if not raw or raw in ("PONG", "pong"):
-                            continue
-                        try:
-                            msg = fast_loads(raw)
-                        except Exception:
-                            continue
-
-                        topic = msg.get("topic") or ""
-                        msg_type = msg.get("type") or ""
-                        if topic not in ("crypto_prices_chainlink", "crypto_prices_twap_sixty"):
-                            continue
-
-                        items = self._extract_items(msg)
-                        if not items:
-                            continue
-
-                        is_snapshot = (msg_type == "subscribe")
-                        recv_now = time.time()
-                        kind = "twap60" if topic == "crypto_prices_twap_sixty" else "spot"
-
-                        for item in items:
-                            sym = str(item.get("symbol") or "").lower()
-                            if sym and sym not in ("btc/usd", "btcusd"):
+                        async for raw in ws:
+                            if self._stop:
+                                break
+                            if not raw or raw in ("PONG", "pong"):
                                 continue
-                            # RTDS full_accuracy_value is E18 integer string; fallback to value
-                            price = self._parse_dec(item.get("full_accuracy_value"), allow_e18=True)
-                            if price is None:
-                                price = self._parse_dec(item.get("value"), allow_e18=False)
-                            if price is None:
+                            try:
+                                msg = fast_loads(raw)
+                            except Exception:
                                 continue
 
-                            ev_sec = self._parse_ts_sec(item, recv_now)
-                            lat = max(0.0, (recv_now - ev_sec) * 1000.0) if not is_snapshot else 0.0
-                            if kind == "spot":
-                                self.status["rtds"]["last_spot"] = str(price.quantize(Decimal("0.01")))
-                            else:
-                                self.status["rtds"]["last_twap60"] = str(price.quantize(Decimal("0.01")))
-                            self.status["rtds"].update({
-                                "latency_ms": round(lat, 1),
-                                "last_msg_ts": recv_now,
-                                "last_error": "",
-                            })
-                            self._record_oracle_price(kind, price, ev_sec, "RTDS", is_snapshot)
+                            topic = msg.get("topic") or ""
+                            msg_type = msg.get("type") or ""
+                            if topic not in ("crypto_prices_chainlink", "crypto_prices_twap_sixty"):
+                                continue
+
+                            items = self._extract_items(msg)
+                            if not items:
+                                continue
+
+                            is_snapshot = (msg_type == "subscribe")
+                            recv_now = time.time()
+                            kind = "twap60" if topic == "crypto_prices_twap_sixty" else "spot"
+
+                            for item in items:
+                                sym = str(item.get("symbol") or "").lower()
+                                if sym and sym not in ("btc/usd", "btcusd"):
+                                    continue
+                                price = self._parse_dec(item.get("full_accuracy_value"), allow_e18=True)
+                                if price is None:
+                                    price = self._parse_dec(item.get("value"), allow_e18=False)
+                                if price is None:
+                                    continue
+
+                                ev_sec = self._parse_ts_sec(item, recv_now)
+                                lat = max(0.0, (self.clock.server_now() - ev_sec) * 1000.0) if not is_snapshot else 0.0
+                                if kind == "spot":
+                                    self.status["rtds"]["last_spot"] = str(price.quantize(Decimal("0.01")))
+                                else:
+                                    self.status["rtds"]["last_twap60"] = str(price.quantize(Decimal("0.01")))
+                                self.status["rtds"].update({
+                                    "latency_ms": round(lat, 1),
+                                    "last_msg_ts": recv_now,
+                                    "last_error": "",
+                                })
+                                self._record_oracle_price(kind, price, ev_sec, "RTDS", is_snapshot)
                     finally:
                         ping_task.cancel()
             except Exception as e:
@@ -528,7 +791,6 @@ class PolymarketOracleSync:
                 await asyncio.sleep(2.5)
 
     async def run_polybolt(self):
-        """Authenticated Polymarket PolyBolt WS (primary oracle whenever CLOB API credentials are configured)."""
         while not self._stop:
             self._reconnect_polybolt.clear()
             if not self.creds:
@@ -538,7 +800,12 @@ class PolymarketOracleSync:
                 continue
 
             try:
-                async with websockets.connect(POLYBOLT_WS_URL, ping_interval=None, close_timeout=5) as ws:
+                async with websockets.connect(
+                    POLYBOLT_WS_URL,
+                    ping_interval=None,
+                    close_timeout=5,
+                    **ws_headers_kwarg(websockets.connect),
+                ) as ws:
                     auth_frame = {
                         "op": "auth",
                         "rid": "a1",
@@ -606,7 +873,7 @@ class PolymarketOracleSync:
                                 continue
 
                             ev_sec = self._parse_ts_sec(item, recv_now)
-                            lat = max(0.0, (recv_now - ev_sec) * 1000.0) if not is_snapshot else 0.0
+                            lat = max(0.0, (self.clock.server_now() - ev_sec) * 1000.0) if not is_snapshot else 0.0
                             if kind == "spot":
                                 self.status["polybolt"]["last_spot"] = str(price.quantize(Decimal("0.01")))
                             else:

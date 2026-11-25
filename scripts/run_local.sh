@@ -5,4 +5,4 @@ cd "$(dirname "$0")/.."
 source .venv/bin/activate
 pip install -r requirements.txt -q
 echo "Starting Polymarket BTC 5m Quant Elder Terminal on http://127.0.0.1:8080 (Default Password: qq111111)"
-uvicorn backend.main:app --host 0.0.0.0 --port 8080 --reload
+uvicorn backend.main:app --host 0.0.0.0 --port 8080 --workers 1

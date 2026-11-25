@@ -16,6 +16,7 @@ import asyncio
 import csv
 import io
 import json
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
@@ -37,6 +38,12 @@ from backend.auth_crypto import (
 from backend.fast_json import dumps_str as fast_dumps_str
 from backend.execution.engine import QuantTradingEngine
 from backend.storage.db import Database
+from backend.strategy.strategy_io import (
+    export_strategy_bundle,
+    get_backup_status,
+    import_strategy_bundle,
+    restore_pre_import_backup,
+)
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 db = Database()
@@ -117,20 +124,36 @@ class ChangePasswordReq(BaseModel):
 
 
 class ModeReq(BaseModel):
-    mode: str  # PAPER | LIVE | PAUSED
+    mode: str  # PAPER | LIVE (legacy PAUSED mapped to pause toggle)
+    confirm_live: bool = False
+
+
+class PauseReq(BaseModel):
+    paused: bool
     confirm_live: bool = False
 
 
 class RiskConfigReq(BaseModel):
-    unit_size_usdc: float = 10.0
-    max_daily_loss_usdc: float = 100.0
-    consecutive_loss_limit: int = 3
+    unit_size_usdc: float = 5.0
+    max_daily_loss_usdc: float = 50.0
+    consecutive_loss_limit: int = 4
+    live_taker_only: bool = True
+    live_enable_arb_lock: bool = False
+    strategy_engine: str = "FV_DISCOUNT_LEADER"
+    fv_exit_mode: str = "TIME_TWAP_MOAT"
+    fv_strict_5s_confirm: bool = False
 
 
 class WalletConfigReq(BaseModel):
     private_key: Optional[str] = None
-    signature_type: int = 2
+    signature_type: int = 3
     funder_address: str = ""
+    wallet_type: str = ""
+
+
+class WalletDetectReq(BaseModel):
+    private_key: Optional[str] = None
+    auto_apply: bool = True
 
 
 class WebhookReq(BaseModel):
@@ -152,6 +175,14 @@ class AutoTrainConfigReq(BaseModel):
     enabled: bool = True
     interval_hours: int = 12
     min_rounds: int = 16
+
+
+class StrategyImportReq(BaseModel):
+    bundle: dict
+    apply_online_state: bool = True
+    apply_risk_config: bool = True
+    apply_auto_train: bool = True
+    apply_champion_model: bool = True
 
 
 @app.post("/api/auth/login")
@@ -212,8 +243,17 @@ async def get_state(_=Depends(require_auth)):
 
 
 @app.get("/api/orders")
-async def get_orders(mode: str = Query("ALL"), limit: int = Query(100, le=500), _=Depends(require_auth)):
-    return {"orders": engine.get_enriched_orders(mode=mode, limit=limit)}
+async def get_orders(mode: str = Query("PAPER"), limit: int = Query(100, le=500), _=Depends(require_auth)):
+    m = str(mode or "PAPER").upper()
+    if m not in ("PAPER", "LIVE", "SHADOW"):
+        m = db.get_trading_mode()
+    audit = db.get_account_audit_summary(m)
+    return {
+        "mode": m,
+        "orders": engine.get_enriched_orders(mode=m, limit=limit),
+        "stats": audit["stats"],
+        "audit": audit,
+    }
 
 
 @app.get("/api/orders/export")
@@ -234,9 +274,22 @@ async def export_orders_csv(mode: str = Query("PAPER"), _=Depends(require_auth))
 
 @app.get("/api/equity")
 async def get_equity(mode: str = Query("PAPER"), _=Depends(require_auth)):
+    m = mode.upper()
+    curve = db.get_equity_curve(mode=m, limit=500)
+    stats = db.get_performance_stats(mode=m)
+    if m == "LIVE" and not curve:
+        pf = engine.account.cached_portfolio
+        live_eq = float(pf.get("total_equity") or pf.get("pusd_balance") or 0.0)
+        curve = [{
+            "ts": pf.get("updated_at") or time.time(),
+            "window_ts": engine.current_window_ts,
+            "balance_usdc": round(live_eq, 4),
+            "cumulative_pnl": float(stats.get("total_pnl") or 0.0),
+            "trade_count": int(stats.get("total_trades") or 0),
+        }]
     return {
-        "curve": db.get_equity_curve(mode=mode, limit=500),
-        "stats": db.get_performance_stats(mode=mode),
+        "curve": curve,
+        "stats": stats,
     }
 
 
@@ -245,19 +298,120 @@ async def get_rounds(_=Depends(require_auth)):
     return {"rounds": db.get_recent_settled_rounds(limit=30)}
 
 
+async def _validate_and_prepare_live_execution(confirm_live: bool) -> dict:
+    if not confirm_live:
+        raise HTTPException(status_code=400, detail="开启实盘自动交易必须二次确认")
+    if engine.oracle.status["geo_check"].get("blocked"):
+        raise HTTPException(status_code=400, detail="当前服务器 IP 处于 Polymarket 地区限制范围，禁止开启实盘")
+    if engine.is_duplicate_instance:
+        raise HTTPException(status_code=409, detail="检测到重复进程，请先清理残留进程后再开启实盘")
+    w = engine.account.get_public_wallet_info()
+    if not w.get("sdk_available"):
+        raise HTTPException(status_code=400, detail="未安装官方 CLOB V2 SDK (polymarket-client)，请执行 bash scripts/deploy.sh 自动安装")
+    if not w["has_private_key"] or not w["has_api_creds"] or w["is_observer_only"]:
+        raise HTTPException(status_code=400, detail="请先导入实盘私钥并完成 CLOB V2 API 凭证派生")
+    pf = await engine.account.refresh_balances_and_portfolio(force=True)
+    engine.account.restart_user_stream()
+    live_eq = float(pf.get("total_equity") or pf.get("pusd_balance") or 0.0)
+    existing_live_curve = db.get_equity_curve(mode="LIVE", limit=1)
+    if not existing_live_curve or abs(float(existing_live_curve[-1].get("balance_usdc") or 0.0) - live_eq) >= 0.01:
+        live_stats = db.get_performance_stats("LIVE")
+        db.record_equity("LIVE", engine.current_window_ts, round(live_eq, 4), live_stats["total_pnl"], live_stats["total_trades"])
+    return pf
+
+
 @app.post("/api/trading/mode")
 async def set_trading_mode(req: ModeReq, _=Depends(require_auth)):
     mode = req.mode.upper()
-    if mode not in ("PAPER", "LIVE", "PAUSED"):
-        raise HTTPException(status_code=400, detail="无效的运行模式")
+    if mode == "PAUSED":
+        db.set_trading_paused(True)
+        return {"ok": True, "mode": db.get_trading_mode(), "paused": True}
+    if mode not in ("PAPER", "LIVE"):
+        raise HTTPException(status_code=400, detail="无效的账户模式")
+
+    paused = db.is_trading_paused()
     if mode == "LIVE":
-        if not req.confirm_live:
-            raise HTTPException(status_code=400, detail="开启实盘必须二次确认")
-        w = engine.account.get_public_wallet_info()
-        if not w["has_private_key"] or not w["has_api_creds"] or w["is_observer_only"]:
-            raise HTTPException(status_code=400, detail="请先导入实盘私钥并完成 API 凭证派生")
+        if not paused:
+            await _validate_and_prepare_live_execution(req.confirm_live)
+        else:
+            if engine.account.get_public_wallet_info().get("has_private_key"):
+                try:
+                    await engine.account.refresh_balances_and_portfolio(force=True)
+                except Exception:
+                    pass
     db.set_kv("trading_mode", mode)
-    return {"ok": True, "mode": mode}
+    return {"ok": True, "mode": mode, "paused": paused}
+
+
+@app.post("/api/trading/pause")
+async def set_trading_pause(req: PauseReq, _=Depends(require_auth)):
+    mode = db.get_trading_mode()
+    if req.paused:
+        db.set_trading_paused(True)
+        return {"ok": True, "mode": mode, "paused": True}
+    if mode == "LIVE":
+        await _validate_and_prepare_live_execution(req.confirm_live)
+    db.set_trading_paused(False)
+    return {"ok": True, "mode": mode, "paused": False}
+
+
+@app.post("/api/trading/cancel-live")
+async def cancel_all_live_orders(_=Depends(require_auth)):
+    try:
+        return await engine.account.cancel_all_open_orders()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/trading/cancel-order/{order_id}")
+async def cancel_single_live_order(order_id: str, _=Depends(require_auth)):
+    try:
+        return await engine.account.cancel_order(order_id)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/account")
+async def get_polymarket_account(force: bool = Query(False), _=Depends(require_auth)):
+    """Polymarket official SDK account snapshot (cash, portfolio, positions, open orders, approvals)."""
+    pf = await engine.account.refresh_balances_and_portfolio(
+        force=force, cache_key=str(engine.current_condition_id or "")
+    )
+    return {
+        "cash": pf.get("cash", 0.0),
+        "available_cash": pf.get("available_cash", pf.get("pusd_balance", 0.0)),
+        "portfolio": pf.get("portfolio_value", 0.0),
+        "total_equity": pf.get("total_equity", 0.0),
+        "open_orders_locked_usdc": pf.get("open_orders_locked_usdc", 0.0),
+        "local_reserved_usdc": pf.get("local_reserved_usdc", 0.0),
+        "cash_verified": bool(pf.get("cash_verified", False)),
+        "approved": bool(pf.get("approved", pf.get("allowance_ok", False))),
+        "missing_approvals": pf.get("missing_approvals", []),
+        "positions": pf.get("open_positions", []),
+        "orders": pf.get("open_orders", []),
+        "wallet": engine.account.get_public_wallet_info(),
+        "live_channel": engine.account.live_channel_status,
+        "error": pf.get("error", ""),
+        "updated_at": pf.get("updated_at", 0.0),
+    }
+
+
+@app.post("/api/trading/reconcile-live")
+async def reconcile_live_now(_=Depends(require_auth)):
+    res = await engine.reconcile_live_orders()
+    await engine.account.refresh_balances_and_portfolio(force=True)
+    return res
+
+
+@app.get("/api/positions/lookup")
+async def lookup_positions(user: str = Query(...), _=Depends(require_auth)):
+    """Channel 2 read-only data-api lookup for any 0x Polymarket address (no private key required)."""
+    try:
+        cids = [engine.current_condition_id] if engine.current_condition_id else None
+        rows = await engine.account.lookup_address_positions(user, condition_ids=cids)
+        return {"ok": True, "user": user, "positions": rows}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.post("/api/trading/reset-paper")
@@ -286,19 +440,38 @@ async def check_clock_now(_=Depends(require_auth)):
 @app.get("/api/config/risk")
 async def get_risk_config(_=Depends(require_auth)):
     cfg = db.get_json("risk_config", {})
+    em = str(cfg.get("fv_exit_mode") or "TIME_TWAP_MOAT").upper()
+    if em not in ("TIME_TWAP_MOAT", "DYNAMIC_EV", "HOLD_EXPIRY"):
+        em = "TIME_TWAP_MOAT"
     return {
-        "unit_size_usdc": float(cfg.get("unit_size_usdc", 10.0)),
-        "max_daily_loss_usdc": float(cfg.get("max_daily_loss_usdc", 100.0)),
-        "consecutive_loss_limit": int(cfg.get("consecutive_loss_limit", 3)),
+        "unit_size_usdc": float(cfg.get("unit_size_usdc", 5.0)),
+        "max_daily_loss_usdc": float(cfg.get("max_daily_loss_usdc", 50.0)),
+        "consecutive_loss_limit": int(cfg.get("consecutive_loss_limit", 4)),
+        "live_taker_only": bool(cfg.get("live_taker_only", True)),
+        "live_enable_arb_lock": bool(cfg.get("live_enable_arb_lock", False)),
+        "strategy_engine": str(cfg.get("strategy_engine") or "FV_DISCOUNT_LEADER"),
+        "fv_exit_mode": em,
+        "fv_strict_5s_confirm": bool(cfg.get("fv_strict_5s_confirm", False)),
     }
 
 
 @app.post("/api/config/risk")
 async def save_risk_config(req: RiskConfigReq, _=Depends(require_auth)):
+    eng_mode = str(req.strategy_engine or "FV_DISCOUNT_LEADER").upper()
+    if eng_mode not in ("FV_DISCOUNT_LEADER", "LEGACY_ELDER"):
+        eng_mode = "FV_DISCOUNT_LEADER"
+    em = str(req.fv_exit_mode or "TIME_TWAP_MOAT").upper()
+    if em not in ("TIME_TWAP_MOAT", "DYNAMIC_EV", "HOLD_EXPIRY"):
+        em = "TIME_TWAP_MOAT"
     data = {
         "unit_size_usdc": round(max(5.0, min(5000.0, float(req.unit_size_usdc))), 2),
         "max_daily_loss_usdc": round(max(10.0, min(50000.0, float(req.max_daily_loss_usdc))), 2),
         "consecutive_loss_limit": max(2, min(20, int(req.consecutive_loss_limit))),
+        "live_taker_only": bool(req.live_taker_only),
+        "live_enable_arb_lock": bool(req.live_enable_arb_lock),
+        "strategy_engine": eng_mode,
+        "fv_exit_mode": em,
+        "fv_strict_5s_confirm": bool(req.fv_strict_5s_confirm),
     }
     db.set_json("risk_config", data)
     return {"ok": True, "config": data}
@@ -319,8 +492,21 @@ async def save_webhook_config(req: WebhookReq, _=Depends(require_auth)):
 @app.post("/api/wallet/save")
 async def save_wallet(req: WalletConfigReq, _=Depends(require_auth)):
     try:
-        info = engine.account.configure_wallet(req.private_key, req.signature_type, req.funder_address, is_observer_only=False)
+        info = engine.account.configure_wallet(
+            req.private_key, req.signature_type, req.funder_address,
+            is_observer_only=False, wallet_type=req.wallet_type,
+        )
         return {"ok": True, "wallet": info}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/wallet/detect")
+async def detect_wallet(req: WalletDetectReq, _=Depends(require_auth)):
+    try:
+        res = await engine.account.detect_wallet(req.private_key, auto_apply=req.auto_apply)
+        await engine.account.refresh_balances_and_portfolio(force=True)
+        return res
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -328,9 +514,9 @@ async def save_wallet(req: WalletConfigReq, _=Depends(require_auth)):
 @app.post("/api/wallet/derive-api")
 async def derive_wallet_api(_=Depends(require_auth)):
     try:
-        res = await asyncio.to_thread(engine.account.derive_api_credentials)
+        res = await engine.account.derive_api_credentials_async()
         engine.sync_oracle_credentials()
-        await engine.account.refresh_balances_and_portfolio()
+        await engine.account.refresh_balances_and_portfolio(force=True)
         return res
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -339,7 +525,7 @@ async def derive_wallet_api(_=Depends(require_auth)):
 @app.post("/api/wallet/generate-observer")
 async def generate_observer_wallet(_=Depends(require_auth)):
     try:
-        res = await asyncio.to_thread(engine.account.generate_observer_wallet)
+        res = await engine.account.generate_observer_wallet_async()
         engine.sync_oracle_credentials()
         return res
     except Exception as e:
@@ -348,7 +534,7 @@ async def generate_observer_wallet(_=Depends(require_auth)):
 
 @app.post("/api/wallet/refresh-balance")
 async def refresh_wallet_balance(_=Depends(require_auth)):
-    return await engine.account.refresh_balances_and_portfolio()
+    return await engine.account.refresh_balances_and_portfolio(force=True)
 
 
 # -------- Self-Learning & Model Evolution Routes --------
@@ -358,7 +544,54 @@ async def list_models(_=Depends(require_auth)):
         "versions": db.list_model_versions(limit=15),
         "learning": engine.learner.get_dashboard_summary(),
         "dataset": db.get_slice_counts(),
+        "strategy_backup": get_backup_status(db),
     }
+
+
+@app.get("/api/strategy/export")
+async def export_strategy(
+    include_model: bool = Query(True),
+    name: str = Query(""),
+    _=Depends(require_auth),
+):
+    bundle = export_strategy_bundle(engine, include_model=include_model, name=name)
+    raw = json.dumps(bundle, ensure_ascii=False, indent=2).encode("utf-8")
+    ts_tag = time.strftime("%Y%m%d_%H%M%S", time.gmtime())
+    fname = f"poly_strategy_v48_{ts_tag}.json"
+    return StreamingResponse(
+        io.BytesIO(raw),
+        media_type="application/json; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+@app.post("/api/strategy/import")
+async def import_strategy(req: StrategyImportReq, _=Depends(require_auth)):
+    try:
+        return import_strategy_bundle(
+            engine,
+            req.bundle,
+            apply_online_state=req.apply_online_state,
+            apply_risk_config=req.apply_risk_config,
+            apply_auto_train=req.apply_auto_train,
+            apply_champion_model=req.apply_champion_model,
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"导入策略失败: {str(e)[:80]}")
+
+
+@app.post("/api/strategy/rollback")
+async def rollback_strategy(_=Depends(require_auth)):
+    try:
+        return restore_pre_import_backup(engine)
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.post("/api/learning/train-now")

@@ -49,7 +49,7 @@ class PaperExecutionEngine:
         extra_note: str = "",
         exit_arm: str = "HOLD_EXPIRY",
         entry_strategy: str = "momentum_breakout",
-    ) -> dict:
+    ) -> dict | None:
         now = time.time()
         tag = f" | {extra_note}" if extra_note else ""
         order = {
@@ -81,14 +81,31 @@ class PaperExecutionEngine:
             "exit_reason": None,
             "exit_arm": exit_arm,
             "entry_strategy": entry_strategy,
+            "bal_before": round(self.get_balance(), 4) if mode == "PAPER" else None,
+            "bal_after_entry": None,
+            "bal_after_settle": None,
+            "recon_status": "PENDING" if mode == "PAPER" else None,
+            "recon_diff": None,
+            "recon_note": None,
             "notes": f"盘口 {book_bid:.2f}/{book_ask:.2f} | 离场:{exit_arm} | {'吃单' if arm.get('is_taker') else '挂单'}{tag}",
             "_active_after": now + 0.30,
             "_expire_at": now + 0.30 + float(arm["ttl_ms"]) / 1000.0,
             "_is_taker": bool(arm.get("is_taker", False)),
             "_arrived_checked": False,
         }
+        # Atomic cross-process & in-process single-slot guard: refuse duplicate primary/arb order in same round!
+        arb_ids = ("ARB_LOCK_MAKER", "ARB_LOCK_TAKER")
+        is_arb = (arm["id"] in arb_ids)
+        for existing in self.pending_orders:
+            if existing["window_ts"] == window_ts and existing["mode"] == mode and existing["status"] == "PENDING":
+                if (existing["arm_id"] in arb_ids) == is_arb:
+                    return None
+
+        clean = {k: v for k, v in order.items() if not k.startswith("_")}
+        if not self.db.try_insert_order_atomic(clean):
+            return None
+
         self.pending_orders.append(order)
-        self._persist(order)
         return order
 
     def submit_early_exit(
@@ -179,9 +196,10 @@ class PaperExecutionEngine:
                             fill_tag = f"0费Maker被扫@{lim:.2f}"
             else:
                 if best_bid > 0.01:
-                    exec_px = best_bid
+                    is_fv_ex = (str(ex["order_ref"].get("arm_id") or "") == "FV_LEADER_FAK")
+                    exec_px = max(0.01, round(best_bid - (0.01 if is_fv_ex else 0.0), 4))
                     charge_exit_taker_fee = True
-                    fill_tag = f"市价平仓@{best_bid:.2f}"
+                    fill_tag = f"悲观FAK止盈(-1¢滑)@{exec_px:.2f}" if is_fv_ex else f"市价平仓@{best_bid:.2f}"
 
             if exec_px is not None:
                 o = ex["order_ref"]
@@ -201,8 +219,16 @@ class PaperExecutionEngine:
                 self._persist(o)
 
                 if o["mode"] == "PAPER":
-                    new_bal = round(self.get_balance() + pnl, 4)
+                    prev_bal = self.get_balance()
+                    new_bal = round(prev_bal + pnl, 4)
                     self.db.set_kv("paper_balance", str(new_bal))
+                    b0 = float(o.get("bal_before") if o.get("bal_before") is not None else prev_bal)
+                    rdiff = round((new_bal - prev_bal) - pnl, 4)
+                    o["bal_after_settle"] = new_bal
+                    o["recon_diff"] = rdiff
+                    o["recon_status"] = "OK" if abs(rdiff) <= 0.02 else "MISMATCH"
+                    o["recon_note"] = f"平仓: 前${b0:.2f}→结后${new_bal:.2f} | 理论盈亏{pnl:+.2f} (差{rdiff:+.2f})"
+                    self._persist(o)
                     stats = self.db.get_performance_stats("PAPER")
                     self.db.record_equity("PAPER", int(o["window_ts"]), new_bal, stats["total_pnl"], stats["total_trades"])
             else:
@@ -219,6 +245,12 @@ class PaperExecutionEngine:
             if now >= o["_expire_at"]:
                 o["status"] = "CANCELLED"
                 o["notes"] = (o["notes"] or "") + " | 超时未成交"
+                if o.get("mode") == "PAPER":
+                    cb = round(self.get_balance(), 4)
+                    o["bal_after_settle"] = cb
+                    o["recon_diff"] = 0.0
+                    o["recon_status"] = "OK"
+                    o["recon_note"] = f"撤单无扣款 (余额${cb:.2f})"
                 self._persist(o)
                 self._notify_cancel(o)
                 continue
@@ -253,6 +285,12 @@ class PaperExecutionEngine:
             if now >= o["_expire_at"]:
                 o["status"] = "CANCELLED"
                 o["notes"] = (o["notes"] or "") + " | 超时未成交"
+                if o.get("mode") == "PAPER":
+                    cb = round(self.get_balance(), 4)
+                    o["bal_after_settle"] = cb
+                    o["recon_diff"] = 0.0
+                    o["recon_status"] = "OK"
+                    o["recon_note"] = f"撤单无扣款 (余额${cb:.2f})"
                 self._persist(o)
                 self._notify_cancel(o)
                 continue
@@ -267,14 +305,22 @@ class PaperExecutionEngine:
 
             if o["_is_taker"]:
                 if best_ask > 0:
-                    max_accept = min(round(o["limit_price"] + 0.02, 4), 0.88)
+                    is_fv_pess = (str(o.get("arm_id") or "") == "FV_LEADER_FAK")
+                    pess_slip = 0.01 if is_fv_pess else 0.0
+                    max_accept = min(round(o["limit_price"] + (0.01 if is_fv_pess else 0.02), 4), 0.88)
                     if best_ask <= max_accept:
-                        filled_px = best_ask
+                        filled_px = min(0.98, round(best_ask + pess_slip, 4))
                         charge_taker_fee = True
-                        fill_reason = f"市价吃卖一@{best_ask:.2f}"
+                        fill_reason = f"悲观FAK吃单(+1¢滑)@{filled_px:.2f}" if is_fv_pess else f"市价吃卖一@{best_ask:.2f}"
                     else:
                         o["status"] = "CANCELLED"
                         o["notes"] = (o["notes"] or "") + f" | 300ms滑点超限(卖一已升至{best_ask:.2f})"
+                        if o.get("mode") == "PAPER":
+                            cb = round(self.get_balance(), 4)
+                            o["bal_after_settle"] = cb
+                            o["recon_diff"] = 0.0
+                            o["recon_status"] = "OK"
+                            o["recon_note"] = f"撤单无扣款 (余额${cb:.2f})"
                         self._persist(o)
                         self._notify_cancel(o)
                         continue
@@ -307,6 +353,13 @@ class PaperExecutionEngine:
                 o["fee_usdc"] = round(fee, 4)
                 o["status"] = "FILLED"
                 o["filled_at"] = now
+                if o.get("mode") == "PAPER":
+                    b_cur = round(self.get_balance(), 4)
+                    o["bal_before"] = b_cur
+                    o["bal_after_entry"] = round(b_cur - float(o["size_usdc"]) - float(o["fee_usdc"] or 0.0), 4)
+                    o["recon_status"] = "OK"
+                    o["recon_diff"] = 0.0
+                    o["recon_note"] = f"开仓占用 ${float(o['size_usdc']) + float(o['fee_usdc'] or 0.0):.2f} (前${b_cur:.2f}→可用${o['bal_after_entry']:.2f})"
                 o["notes"] = (o["notes"] or "") + f" | {fill_reason} ({int((now - o['created_at'])*1000)}ms)"
                 self._persist(o)
             else:
@@ -360,11 +413,26 @@ class PaperExecutionEngine:
                 self.db.save_order(o)
                 settled_list.append(o)
                 continue
+            if o["status"] in ("FAILED", "REJECTED", "SUBMITTING", "UNVERIFIED"):
+                continue
+            if o["status"] == "CONFIRMING":
+                if o["mode"] == "LIVE":
+                    continue  # Never settle an unconfirmed LIVE order; reconciler must prove fill or FAILED first!
+                o["status"] = "CANCELLED"
+                o["official_outcome"] = official_outcome
+                o["settled_at"] = time.time()
+                self.db.save_order(o)
+                continue
             if o["status"] == "PENDING":
                 o["status"] = "CANCELLED"
                 o["official_outcome"] = official_outcome
                 o["settled_at"] = time.time()
                 o["notes"] = (o["notes"] or "") + " | 场次结束撤单"
+                if o["mode"] == "PAPER":
+                    o["bal_after_settle"] = round(paper_balance, 4)
+                    o["recon_diff"] = 0.0
+                    o["recon_status"] = "OK"
+                    o["recon_note"] = f"场次结束撤单 (余额${paper_balance:.2f})"
                 self.db.save_order(o)
                 settled_list.append(o)
                 continue
@@ -382,12 +450,19 @@ class PaperExecutionEngine:
             o["official_outcome"] = official_outcome
             o["pnl_usdc"] = pnl
             o["settled_at"] = time.time()
-            self.db.save_order(o)
-            settled_list.append(o)
 
             if o["mode"] == "PAPER":
+                prev_pb = paper_balance
                 paper_balance = round(paper_balance + pnl, 4)
                 paper_changed = True
+                rdiff = round((paper_balance - prev_pb) - pnl, 4)
+                o["bal_after_settle"] = paper_balance
+                o["recon_diff"] = rdiff
+                o["recon_status"] = "OK" if abs(rdiff) <= 0.02 else "MISMATCH"
+                o["recon_note"] = f"结算({official_outcome}): 前${prev_pb:.2f}→结后${paper_balance:.2f} | 理论{pnl:+.2f} (差{rdiff:+.2f})"
+
+            self.db.save_order(o)
+            settled_list.append(o)
 
         if paper_changed:
             self.db.set_kv("paper_balance", str(paper_balance))

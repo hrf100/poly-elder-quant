@@ -123,7 +123,13 @@ class Database:
                 exit_price REAL,
                 exit_reason TEXT,
                 exit_arm TEXT,
-                entry_strategy TEXT
+                entry_strategy TEXT,
+                bal_before REAL,
+                bal_after_entry REAL,
+                bal_after_settle REAL,
+                recon_status TEXT,
+                recon_diff REAL,
+                recon_note TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_orders_mode_ts ON orders(mode, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_orders_window ON orders(window_ts);
@@ -183,6 +189,12 @@ class Database:
             ("exit_reason", "TEXT"),
             ("exit_arm", "TEXT"),
             ("entry_strategy", "TEXT"),
+            ("bal_before", "REAL"),
+            ("bal_after_entry", "REAL"),
+            ("bal_after_settle", "REAL"),
+            ("recon_status", "TEXT"),
+            ("recon_diff", "REAL"),
+            ("recon_note", "TEXT"),
         ):
             if col_name not in order_cols:
                 self._conn.execute(f"ALTER TABLE orders ADD COLUMN {col_name} {col_def}")
@@ -193,6 +205,7 @@ class Database:
             "auth_password_hash": hash_password(DEFAULT_PASSWORD),
             "is_default_password": "true",
             "trading_mode": "PAPER",
+            "trading_paused": "false",
             "paper_initial_balance": "1000.0",
             "paper_balance": "1000.0",
             "risk_config": json.dumps({
@@ -239,6 +252,28 @@ class Database:
                 (now,),
             )
         self._conn.commit()
+
+    def get_trading_mode(self) -> str:
+        """Always returns active account mode ('PAPER' or 'LIVE'); auto-migrates legacy 'PAUSED'."""
+        raw = str(self.get_kv("trading_mode", "PAPER") or "PAPER").upper()
+        if raw == "PAUSED":
+            self.set_kv("trading_paused", "true")
+            self.set_kv("trading_mode", "PAPER")
+            return "PAPER"
+        return "LIVE" if raw == "LIVE" else "PAPER"
+
+    def is_trading_paused(self) -> bool:
+        """Independent trading pause flag (decoupled from PAPER/LIVE account view)."""
+        raw_mode = str(self.get_kv("trading_mode", "PAPER") or "PAPER").upper()
+        if raw_mode == "PAUSED":
+            self.set_kv("trading_paused", "true")
+            self.set_kv("trading_mode", "PAPER")
+            return True
+        raw_p = str(self.get_kv("trading_paused", "false") or "false").strip().lower()
+        return raw_p in ("1", "true", "yes", "on")
+
+    def set_trading_paused(self, paused: bool) -> None:
+        self.set_kv("trading_paused", "true" if paused else "false")
 
     def get_kv(self, key: str, default: Any = None) -> Any:
         with self._lock:
@@ -368,13 +403,23 @@ class Database:
             if self._slice_counts_cache is not None:
                 self._slice_counts_cache["total_slices"] += 1
 
-    def save_order(self, order: dict) -> None:
+    @staticmethod
+    def _ensure_order_defaults(order: dict) -> None:
         order.setdefault("book_bid", None)
         order.setdefault("book_ask", None)
         order.setdefault("exit_price", None)
         order.setdefault("exit_reason", None)
         order.setdefault("exit_arm", None)
         order.setdefault("entry_strategy", None)
+        order.setdefault("bal_before", None)
+        order.setdefault("bal_after_entry", None)
+        order.setdefault("bal_after_settle", None)
+        order.setdefault("recon_status", None)
+        order.setdefault("recon_diff", None)
+        order.setdefault("recon_note", None)
+
+    def save_order(self, order: dict) -> None:
+        self._ensure_order_defaults(order)
         with self._lock:
             self._conn.execute(
                 """
@@ -383,16 +428,19 @@ class Database:
                     shares, fee_usdc, status, model_win_prob, market_implied_prob, edge,
                     net_power_bps, elapsed_sec, regime, official_outcome, pnl_usdc,
                     created_at, filled_at, settled_at, notes, book_bid, book_ask,
-                    exit_price, exit_reason, exit_arm, entry_strategy
+                    exit_price, exit_reason, exit_arm, entry_strategy,
+                    bal_before, bal_after_entry, bal_after_settle, recon_status, recon_diff, recon_note
                 ) VALUES (
                     :order_id, :window_ts, :mode, :side, :arm_id, :limit_price, :fill_price, :size_usdc,
                     :shares, :fee_usdc, :status, :model_win_prob, :market_implied_prob, :edge,
                     :net_power_bps, :elapsed_sec, :regime, :official_outcome, :pnl_usdc,
                     :created_at, :filled_at, :settled_at, :notes, :book_bid, :book_ask,
-                    :exit_price, :exit_reason, :exit_arm, :entry_strategy
+                    :exit_price, :exit_reason, :exit_arm, :entry_strategy,
+                    :bal_before, :bal_after_entry, :bal_after_settle, :recon_status, :recon_diff, :recon_note
                 )
                 ON CONFLICT(order_id) DO UPDATE SET
                     fill_price=excluded.fill_price,
+                    size_usdc=excluded.size_usdc,
                     shares=excluded.shares,
                     fee_usdc=excluded.fee_usdc,
                     status=excluded.status,
@@ -404,13 +452,79 @@ class Database:
                     exit_price=COALESCE(excluded.exit_price, orders.exit_price),
                     exit_reason=COALESCE(excluded.exit_reason, orders.exit_reason),
                     exit_arm=COALESCE(excluded.exit_arm, orders.exit_arm),
-                    entry_strategy=COALESCE(excluded.entry_strategy, orders.entry_strategy)
+                    entry_strategy=COALESCE(excluded.entry_strategy, orders.entry_strategy),
+                    bal_before=COALESCE(excluded.bal_before, orders.bal_before),
+                    bal_after_entry=COALESCE(excluded.bal_after_entry, orders.bal_after_entry),
+                    bal_after_settle=COALESCE(excluded.bal_after_settle, orders.bal_after_settle),
+                    recon_status=COALESCE(excluded.recon_status, orders.recon_status),
+                    recon_diff=CASE WHEN excluded.recon_diff IS NOT NULL THEN excluded.recon_diff ELSE orders.recon_diff END,
+                    recon_note=COALESCE(excluded.recon_note, orders.recon_note)
                 """,
                 order,
             )
             self._conn.commit()
             self._stats_cache.pop(str(order.get("mode") or ""), None)
             self._window_orders_cache.pop(int(order["window_ts"]), None)
+
+    def replace_order_id(self, old_order_id: str, new_order: dict) -> None:
+        """Atomically swap a temporary pre-flight SUBMITTING placeholder row with the real exchange order_id."""
+        self._ensure_order_defaults(new_order)
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                if old_order_id != new_order["order_id"]:
+                    self._conn.execute("DELETE FROM orders WHERE order_id=?", (old_order_id,))
+                self._conn.execute(
+                    """
+                    INSERT INTO orders (
+                        order_id, window_ts, mode, side, arm_id, limit_price, fill_price, size_usdc,
+                        shares, fee_usdc, status, model_win_prob, market_implied_prob, edge,
+                        net_power_bps, elapsed_sec, regime, official_outcome, pnl_usdc,
+                        created_at, filled_at, settled_at, notes, book_bid, book_ask,
+                        exit_price, exit_reason, exit_arm, entry_strategy,
+                        bal_before, bal_after_entry, bal_after_settle, recon_status, recon_diff, recon_note
+                    ) VALUES (
+                        :order_id, :window_ts, :mode, :side, :arm_id, :limit_price, :fill_price, :size_usdc,
+                        :shares, :fee_usdc, :status, :model_win_prob, :market_implied_prob, :edge,
+                        :net_power_bps, :elapsed_sec, :regime, :official_outcome, :pnl_usdc,
+                        :created_at, :filled_at, :settled_at, :notes, :book_bid, :book_ask,
+                        :exit_price, :exit_reason, :exit_arm, :entry_strategy,
+                        :bal_before, :bal_after_entry, :bal_after_settle, :recon_status, :recon_diff, :recon_note
+                    )
+                    ON CONFLICT(order_id) DO UPDATE SET
+                        fill_price=excluded.fill_price,
+                        size_usdc=excluded.size_usdc,
+                        shares=excluded.shares,
+                        fee_usdc=excluded.fee_usdc,
+                        status=excluded.status,
+                        official_outcome=excluded.official_outcome,
+                        pnl_usdc=excluded.pnl_usdc,
+                        filled_at=excluded.filled_at,
+                        settled_at=excluded.settled_at,
+                        notes=excluded.notes,
+                        bal_before=COALESCE(excluded.bal_before, orders.bal_before),
+                        bal_after_entry=COALESCE(excluded.bal_after_entry, orders.bal_after_entry),
+                        bal_after_settle=COALESCE(excluded.bal_after_settle, orders.bal_after_settle),
+                        recon_status=COALESCE(excluded.recon_status, orders.recon_status),
+                        recon_diff=CASE WHEN excluded.recon_diff IS NOT NULL THEN excluded.recon_diff ELSE orders.recon_diff END,
+                        recon_note=COALESCE(excluded.recon_note, orders.recon_note)
+                    """,
+                    new_order,
+                )
+                self._conn.commit()
+                self._stats_cache.pop(str(new_order.get("mode") or ""), None)
+                self._window_orders_cache.pop(int(new_order["window_ts"]), None)
+            except Exception:
+                try:
+                    self._conn.execute("ROLLBACK")
+                except Exception:
+                    pass
+                raise
+
+    def get_order(self, order_id: str) -> Optional[dict]:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM orders WHERE order_id=?", (order_id,)).fetchone()
+            return dict(row) if row else None
 
     def get_orders(self, mode: Optional[str] = None, limit: int = 100) -> list[dict]:
         with self._lock:
@@ -424,18 +538,83 @@ class Database:
                 ).fetchall()
             return [dict(r) for r in rows]
 
+    def try_insert_order_atomic(self, order: dict) -> bool:
+        """
+        Cross-process atomic single-primary-order guard using SQLite BEGIN IMMEDIATE:
+        Guarantees at most ONE active primary order (or ONE arb-lock hedge) per (window_ts, mode)
+        even if multiple coroutines or multiple OS processes hit the same SQLite database simultaneously.
+        Returns True if inserted, False if an active order already exists for that slot.
+        """
+        self._ensure_order_defaults(order)
+
+        wts = int(order["window_ts"])
+        mode = str(order["mode"])
+        is_arb = str(order.get("arm_id") or "") in ("ARB_LOCK_MAKER", "ARB_LOCK_TAKER")
+
+        with self._lock:
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                if is_arb:
+                    exists = self._conn.execute(
+                        """
+                        SELECT 1 FROM orders
+                        WHERE window_ts=? AND mode=? AND arm_id IN ('ARB_LOCK_MAKER', 'ARB_LOCK_TAKER')
+                          AND status IN ('SUBMITTING', 'CONFIRMING', 'PENDING', 'FILLED', 'SETTLED', 'CLOSED')
+                        LIMIT 1
+                        """,
+                        (wts, mode),
+                    ).fetchone()
+                else:
+                    exists = self._conn.execute(
+                        """
+                        SELECT 1 FROM orders
+                        WHERE window_ts=? AND mode=? AND arm_id NOT IN ('ARB_LOCK_MAKER', 'ARB_LOCK_TAKER')
+                          AND status IN ('SUBMITTING', 'CONFIRMING', 'PENDING', 'FILLED', 'SETTLED', 'CLOSED')
+                        LIMIT 1
+                        """,
+                        (wts, mode),
+                    ).fetchone()
+                if exists is not None:
+                    self._conn.execute("ROLLBACK")
+                    return False
+
+                self._conn.execute(
+                    """
+                    INSERT INTO orders (
+                        order_id, window_ts, mode, side, arm_id, limit_price, fill_price, size_usdc,
+                        shares, fee_usdc, status, model_win_prob, market_implied_prob, edge,
+                        net_power_bps, elapsed_sec, regime, official_outcome, pnl_usdc,
+                        created_at, filled_at, settled_at, notes, book_bid, book_ask,
+                        exit_price, exit_reason, exit_arm, entry_strategy,
+                        bal_before, bal_after_entry, bal_after_settle, recon_status, recon_diff, recon_note
+                    ) VALUES (
+                        :order_id, :window_ts, :mode, :side, :arm_id, :limit_price, :fill_price, :size_usdc,
+                        :shares, :fee_usdc, :status, :model_win_prob, :market_implied_prob, :edge,
+                        :net_power_bps, :elapsed_sec, :regime, :official_outcome, :pnl_usdc,
+                        :created_at, :filled_at, :settled_at, :notes, :book_bid, :book_ask,
+                        :exit_price, :exit_reason, :exit_arm, :entry_strategy,
+                        :bal_before, :bal_after_entry, :bal_after_settle, :recon_status, :recon_diff, :recon_note
+                    )
+                    """,
+                    order,
+                )
+                self._conn.commit()
+                self._stats_cache.pop(mode, None)
+                self._window_orders_cache.pop(wts, None)
+                return True
+            except Exception:
+                try:
+                    self._conn.execute("ROLLBACK")
+                except Exception:
+                    pass
+                raise
+
     def get_orders_by_window(self, window_ts: int) -> list[dict]:
+        """Always read ground-truth SQLite (indexed <0.05ms) to prevent any cross-process stale cache."""
         wts = int(window_ts)
         with self._lock:
-            cached = self._window_orders_cache.get(wts)
-            if cached is not None:
-                return [dict(o) for o in cached]
             rows = self._conn.execute("SELECT * FROM orders WHERE window_ts=?", (wts,)).fetchall()
-            res = [dict(r) for r in rows]
-            if len(self._window_orders_cache) > 12:
-                self._window_orders_cache.clear()
-            self._window_orders_cache[wts] = res
-            return [dict(o) for o in res]
+            return [dict(r) for r in rows]
 
     def record_equity(self, mode: str, window_ts: int, balance_usdc: float, cumulative_pnl: float, trade_count: int) -> None:
         with self._lock:
@@ -504,6 +683,63 @@ class Database:
             self._stats_cache[mode] = (now, res)
             return dict(res)
 
+    def get_account_audit_summary(self, mode: str = "PAPER") -> dict:
+        """
+        Strict per-mode independent ledger & fund reconciliation summary (PAPER / LIVE / SHADOW).
+        Never mixes PAPER and LIVE orders or balances!
+        """
+        m = str(mode or "PAPER").upper()
+        if m not in ("PAPER", "LIVE", "SHADOW"):
+            m = "PAPER"
+        stats = self.get_performance_stats(m)
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT status, recon_status, recon_diff, size_usdc, fee_usdc, pnl_usdc FROM orders WHERE mode=?",
+                (m,),
+            ).fetchall()
+
+        status_counts: dict[str, int] = {}
+        recon_counts = {"OK": 0, "WARN": 0, "MISMATCH": 0, "PENDING": 0}
+        active_cost_sum = 0.0
+        for r in rows:
+            st = str(r["status"] or "")
+            status_counts[st] = status_counts.get(st, 0) + 1
+            rs = str(r["recon_status"] or "")
+            if rs in recon_counts:
+                recon_counts[rs] += 1
+            if st in ("FILLED", "CONFIRMING", "PENDING", "SUBMITTING"):
+                active_cost_sum += float(r["size_usdc"] or 0.0) + float(r["fee_usdc"] or 0.0)
+
+        out = {
+            "mode": m,
+            "stats": stats,
+            "total_orders": len(rows),
+            "filled_active": status_counts.get("FILLED", 0),
+            "confirming": status_counts.get("CONFIRMING", 0) + status_counts.get("SUBMITTING", 0),
+            "pending": status_counts.get("PENDING", 0),
+            "cancelled": status_counts.get("CANCELLED", 0),
+            "failed": status_counts.get("FAILED", 0) + status_counts.get("REJECTED", 0),
+            "active_cost_usdc": round(active_cost_sum, 4),
+            "recon_ok": recon_counts["OK"],
+            "recon_warn": recon_counts["WARN"],
+            "recon_mismatch": recon_counts["MISMATCH"],
+            "recon_pending": recon_counts["PENDING"],
+        }
+
+        if m == "PAPER":
+            init_bal = float(self.get_kv("paper_initial_balance", "1000.0") or 1000.0)
+            cur_bal = float(self.get_kv("paper_balance", "1000.0") or 1000.0)
+            expected_bal = round(init_bal + float(stats["total_pnl"]), 4)
+            diff = round(cur_bal - expected_bal, 4)
+            out.update({
+                "initial_balance": round(init_bal, 4),
+                "current_balance": round(cur_bal, 4),
+                "expected_balance": expected_bal,
+                "ledger_diff": diff,
+                "ledger_ok": abs(diff) <= 0.02,
+            })
+        return out
+
     def get_round(self, window_ts: int) -> Optional[dict]:
         with self._lock:
             row = self._conn.execute("SELECT * FROM rounds WHERE window_ts=?", (window_ts,)).fetchone()
@@ -515,7 +751,7 @@ class Database:
             order_rows = self._conn.execute(
                 """
                 SELECT DISTINCT window_ts FROM orders
-                WHERE window_ts < ? AND status IN ('PENDING', 'FILLED')
+                WHERE window_ts < ? AND status IN ('PENDING', 'CONFIRMING', 'FILLED')
                 ORDER BY window_ts ASC LIMIT ?
                 """,
                 (current_window_ts, limit),
