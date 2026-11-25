@@ -94,7 +94,7 @@ CTF_EXCHANGE_CONTRACT = CTF_EXCHANGE_V2
 NEG_RISK_CTF_EXCHANGE = NEG_RISK_CTF_EXCHANGE_V2
 
 HARD_LIMITS = {
-    "min_unit_usdc": 5.0,
+    "min_unit_usdc": 1.05,
     "max_position_pct": 0.05,
     "max_entry_price": 0.78,
     "min_entry_price": 0.18,

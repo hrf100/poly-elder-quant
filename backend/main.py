@@ -35,6 +35,7 @@ from backend.auth_crypto import (
     verify_access_token,
     verify_password,
 )
+from backend.config import HARD_LIMITS
 from backend.fast_json import dumps_str as fast_dumps_str
 from backend.execution.engine import QuantTradingEngine
 from backend.storage.db import Database
@@ -142,6 +143,10 @@ class RiskConfigReq(BaseModel):
     strategy_engine: str = "FV_DISCOUNT_LEADER"
     fv_exit_mode: str = "TIME_TWAP_MOAT"
     fv_strict_5s_confirm: bool = False
+    sizing_mode: str = "FIXED"
+    dynamic_pct: float = 3.0
+    dynamic_min_usdc: float = 1.05
+    dynamic_max_usdc: float = 50.0
 
 
 class WalletConfigReq(BaseModel):
@@ -443,8 +448,14 @@ async def get_risk_config(_=Depends(require_auth)):
     em = str(cfg.get("fv_exit_mode") or "TIME_TWAP_MOAT").upper()
     if em not in ("TIME_TWAP_MOAT", "DYNAMIC_EV", "HOLD_EXPIRY"):
         em = "TIME_TWAP_MOAT"
+    sm = str(cfg.get("sizing_mode") or "FIXED").upper()
+    if sm not in ("FIXED", "DYNAMIC_PCT"):
+        sm = "FIXED"
+    min_u = float(HARD_LIMITS["min_unit_usdc"])
+    d_min = round(max(min_u, min(1000.0, float(cfg.get("dynamic_min_usdc", min_u)))), 2)
+    d_max = round(max(d_min, min(5000.0, float(cfg.get("dynamic_max_usdc", 50.0)))), 2)
     return {
-        "unit_size_usdc": float(cfg.get("unit_size_usdc", 5.0)),
+        "unit_size_usdc": round(max(min_u, float(cfg.get("unit_size_usdc", 5.0))), 2),
         "max_daily_loss_usdc": float(cfg.get("max_daily_loss_usdc", 50.0)),
         "consecutive_loss_limit": int(cfg.get("consecutive_loss_limit", 4)),
         "live_taker_only": bool(cfg.get("live_taker_only", True)),
@@ -452,6 +463,10 @@ async def get_risk_config(_=Depends(require_auth)):
         "strategy_engine": str(cfg.get("strategy_engine") or "FV_DISCOUNT_LEADER"),
         "fv_exit_mode": em,
         "fv_strict_5s_confirm": bool(cfg.get("fv_strict_5s_confirm", False)),
+        "sizing_mode": sm,
+        "dynamic_pct": round(max(0.5, min(15.0, float(cfg.get("dynamic_pct", 3.0)))), 2),
+        "dynamic_min_usdc": d_min,
+        "dynamic_max_usdc": d_max,
     }
 
 
@@ -463,15 +478,25 @@ async def save_risk_config(req: RiskConfigReq, _=Depends(require_auth)):
     em = str(req.fv_exit_mode or "TIME_TWAP_MOAT").upper()
     if em not in ("TIME_TWAP_MOAT", "DYNAMIC_EV", "HOLD_EXPIRY"):
         em = "TIME_TWAP_MOAT"
+    sm = str(req.sizing_mode or "FIXED").upper()
+    if sm not in ("FIXED", "DYNAMIC_PCT"):
+        sm = "FIXED"
+    min_u = float(HARD_LIMITS["min_unit_usdc"])
+    d_min = round(max(min_u, min(1000.0, float(req.dynamic_min_usdc))), 2)
+    d_max = round(max(d_min, min(5000.0, float(req.dynamic_max_usdc))), 2)
     data = {
-        "unit_size_usdc": round(max(5.0, min(5000.0, float(req.unit_size_usdc))), 2),
-        "max_daily_loss_usdc": round(max(10.0, min(50000.0, float(req.max_daily_loss_usdc))), 2),
+        "unit_size_usdc": round(max(min_u, min(5000.0, float(req.unit_size_usdc))), 2),
+        "max_daily_loss_usdc": round(max(3.0, min(50000.0, float(req.max_daily_loss_usdc))), 2),
         "consecutive_loss_limit": max(2, min(20, int(req.consecutive_loss_limit))),
         "live_taker_only": bool(req.live_taker_only),
         "live_enable_arb_lock": bool(req.live_enable_arb_lock),
         "strategy_engine": eng_mode,
         "fv_exit_mode": em,
         "fv_strict_5s_confirm": bool(req.fv_strict_5s_confirm),
+        "sizing_mode": sm,
+        "dynamic_pct": round(max(0.5, min(15.0, float(req.dynamic_pct))), 2),
+        "dynamic_min_usdc": d_min,
+        "dynamic_max_usdc": d_max,
     }
     db.set_json("risk_config", data)
     return {"ok": True, "config": data}
@@ -557,7 +582,7 @@ async def export_strategy(
     bundle = export_strategy_bundle(engine, include_model=include_model, name=name)
     raw = json.dumps(bundle, ensure_ascii=False, indent=2).encode("utf-8")
     ts_tag = time.strftime("%Y%m%d_%H%M%S", time.gmtime())
-    fname = f"poly_strategy_v49_{ts_tag}.json"
+    fname = f"poly_strategy_v53_{ts_tag}.json"
     return StreamingResponse(
         io.BytesIO(raw),
         media_type="application/json; charset=utf-8",

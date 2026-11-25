@@ -2,6 +2,7 @@ import asyncio
 import dataclasses
 import inspect
 import json
+import math
 import logging
 import re
 import threading
@@ -1281,8 +1282,19 @@ class PolymarketAccountManager:
                     size_matched = agg["shares"]
                     final_px = agg["avg_price"] or final_px
 
-                if size_matched > 0.0:
+                if ex_status in _FAILED_TRADE_STATUSES and size_matched <= 0.0:
+                    summary["cancelled"] += 1
+                    self._emit_live_update({
+                        "event": "trade_failed",
+                        "order_id": oid,
+                        "side": side_s,
+                        "status": ex_status,
+                        "reason": f"交易所订单状态为 {ex_status}",
+                        "ts": time.time(),
+                    })
+                elif size_matched > 0.0:
                     summary["filled"] += 1
+                    is_conf = bool(agg.get("confirmed")) or (ex_status in ("MATCHED", "FILLED", "MINED", "CONFIRMED"))
                     self._emit_live_update({
                         "event": "fill",
                         "order_id": oid,
@@ -1292,6 +1304,7 @@ class PolymarketAccountManager:
                         "size_usdc": round(size_matched * final_px, 4),
                         "fee_usdc": agg["fee_usdc"],
                         "status": ex_status,
+                        "confirmed": is_conf,
                         "ts": time.time(),
                     })
                 elif still_open is False and (ex_status in _TERMINAL_CANCEL_STATUSES or cancel_ok or age_sec >= ttl_sec + 5.0):
@@ -1323,6 +1336,63 @@ class PolymarketAccountManager:
             return await self._run_on_sdk(_run(), timeout=18.0)
         except Exception as e:
             return {"ok": False, "checked": 0, "error": str(e)[:100]}
+
+    async def verify_order_actually_unfilled(self, order_id: str, condition_id: Optional[str] = None) -> dict:
+        """
+        v50 Anti-False-Rollback Guard:
+        Before ever marking a local FILLED order as FAILED when `list_positions()` lags at 0 shares,
+        authoritatively query `get_order(order_id)` + `list_account_trades()` to verify whether
+        the exchange truly has 0 fills (or explicit FAILED status).
+        """
+        out = {"checked": False, "confirmed_unfilled": False, "size_matched": 0.0, "exchange_status": "UNKNOWN", "error": ""}
+        cfg = self.db.get_json("wallet_config", {})
+        if not order_id or not cfg.get("has_private_key") or cfg.get("is_observer_only") or not self.live_channel_status["sdk_available"]:
+            return out
+        creds = self.get_decrypted_api_creds() or {}
+        api_key = creds.get("apiKey", "")
+
+        async def _check():
+            client = await self._ensure_sdk_client()
+            wallet_addrs = self._all_known_wallet_addrs(cfg, client)
+            trades = await self._fetch_account_trades_sdk(client, condition_id=condition_id)
+            failed_trade = False
+            matched_trade_sh = 0.0
+            for t in (trades or []):
+                t_st = str(_get_field(t, "status", default="") or "").upper()
+                extracted = extract_fills_from_trade(t, api_key, wallet_addrs)
+                for f in extracted:
+                    if f.get("order_id") != order_id:
+                        continue
+                    if f.get("is_failed") or t_st in _FAILED_TRADE_STATUSES:
+                        failed_trade = True
+                    else:
+                        matched_trade_sh += float(f.get("shares") or 0.0)
+            go_ok, ord_info, go_err = await _call_sdk_order_method(client, ("get_order", "get_open_order"), order_id)
+            oo_ok, oo_items, _ = await self._fetch_open_orders_sdk(client)
+            still_open = any(
+                str(_get_field(o, "id", "order_id", "orderID", default="") or "") == order_id
+                for o in (oo_items or [])
+            ) if oo_ok else None
+            sz_m = 0.0
+            ex_st = "UNKNOWN"
+            if go_ok and ord_info is not None:
+                sz_m = _to_float(_get_field(ord_info, "size_matched", "sizeMatched", default=0.0))
+                ex_st = str(_get_field(ord_info, "status", default="") or "UNKNOWN").upper()
+            return go_ok, sz_m, ex_st, still_open, failed_trade, matched_trade_sh, go_err
+
+        try:
+            go_ok, sz_m, ex_st, still_open, failed_trade, matched_trade_sh, go_err = await self._run_on_sdk(_check(), timeout=8.0)
+            out["checked"] = bool(go_ok or failed_trade or matched_trade_sh > 0)
+            out["size_matched"] = round(max(sz_m, matched_trade_sh), 4)
+            out["exchange_status"] = "FAILED" if failed_trade else ex_st
+            out["error"] = go_err or ""
+            if failed_trade and matched_trade_sh <= 0.0:
+                out["confirmed_unfilled"] = True
+            elif go_ok and sz_m <= 0.0 and matched_trade_sh <= 0.0 and still_open is False and ex_st in (_TERMINAL_CANCEL_STATUSES | _FAILED_TRADE_STATUSES):
+                out["confirmed_unfilled"] = True
+        except Exception as e:
+            out["error"] = str(e)[:80]
+        return out
 
     async def check_round_exchange_exposure(
         self,
@@ -1838,6 +1908,9 @@ class PolymarketAccountManager:
         if self._stop_flag or not order_id:
             return
         try:
+            await asyncio.sleep(0.35)
+            if self._stop_flag:
+                return
             client = await self._ensure_sdk_client()
             cfg = self.db.get_json("wallet_config", {})
             creds = self.get_decrypted_api_creds() or {}
@@ -1973,6 +2046,47 @@ class PolymarketAccountManager:
                 })
                 return
 
+            # Final authoritative fallback via get_order() so CONFIRMING can NEVER deadlock silently!
+            go_ok, ord_info, _ = await _call_sdk_order_method(client, ("get_order", "get_open_order"), order_id)
+            go_matched = 0.0
+            go_status = ""
+            if go_ok and ord_info is not None:
+                go_matched = _to_float(_get_field(ord_info, "size_matched", "sizeMatched", default=0.0))
+                go_status = str(_get_field(ord_info, "status", default="") or "").upper()
+                p_go = _to_float(_get_field(ord_info, "price", default=confirmed_px))
+                if 0.0 < p_go < 1.0 and confirmed_px == fallback_px:
+                    confirmed_px = p_go
+
+            if go_matched > 0.0 and go_status not in _FAILED_TRADE_STATUSES:
+                final_sh = max(confirmed_shares, go_matched)
+                self._emit_live_update({
+                    "event": "settlement_confirmed",
+                    "order_id": order_id,
+                    "side": side,
+                    "shares": round(final_sh, 4),
+                    "fill_price": round(confirmed_px, 4),
+                    "size_usdc": round(final_sh * confirmed_px, 4),
+                    "fee_usdc": round(confirmed_fee, 4),
+                    "bal_after_entry": avail_after,
+                    "exchange_pos_shares": round(ex_pos_shares, 4),
+                    "trade_status": go_status or "ORDER_MATCHED",
+                    "ts": time.time(),
+                })
+                return
+
+            if go_status in (_FAILED_TRADE_STATUSES | _TERMINAL_CANCEL_STATUSES) and go_matched <= 0.0:
+                self._fills.pop(f"local:{order_id}", None)
+                self._emit_live_update({
+                    "event": "trade_failed",
+                    "order_id": order_id,
+                    "side": side,
+                    "status": "FAILED",
+                    "bal_after_entry": avail_after,
+                    "reason": f"交易所终态 {go_status} 且 0 成交，未产生真实仓位",
+                    "ts": time.time(),
+                })
+                return
+
             # No trade confirmed, 0 exchange shares, AND cash never moved -> ghost / expired FAK!
             no_cash_move = (
                 bal_before is not None
@@ -1988,6 +2102,17 @@ class PolymarketAccountManager:
                     "status": "FAILED",
                     "bal_after_entry": avail_after,
                     "reason": f"确权超时且交易所0持仓/余额未扣(${bal_before:.2f}→${avail_after:.2f})，判定未成交",
+                    "ts": time.time(),
+                })
+            elif side == "SELL" and no_cash_move and not trade_confirmed_seen and go_matched <= 0.0:
+                self._fills.pop(f"local:{order_id}", None)
+                self._emit_live_update({
+                    "event": "trade_failed",
+                    "order_id": order_id,
+                    "side": side,
+                    "status": "FAILED",
+                    "bal_after_entry": avail_after,
+                    "reason": "卖出确权超时且余额未增加，恢复持仓监控",
                     "ts": time.time(),
                 })
         except Exception as e:
@@ -2167,8 +2292,13 @@ class PolymarketAccountManager:
 
         px = self._round_tick(price, tick_size)
         shares = round(size_usdc / px, 2)
-        if shares < float(min_size or 1.0):
-            raise RuntimeError(f"下单份额 {shares:.2f} 小于本场最小限制 {min_size:.2f}")
+        if is_taker:
+            # Polymarket CLOB V2 native marketable BUY (FAK/FOK) minimum is $1.00 USDC (no 5-share limit!)
+            if float(size_usdc) < 1.0 - 1e-9:
+                raise RuntimeError(f"FAK 吃单金额 ${float(size_usdc):.2f} 小于 Polymarket 最低限制 $1.00")
+        else:
+            if shares < float(min_size or 1.0):
+                raise RuntimeError(f"Maker 挂单份额 {shares:.2f} 小于本场最小限制 {min_size:.2f}")
 
         async def _submit():
             client = await self._ensure_sdk_client()
@@ -2262,6 +2392,7 @@ class PolymarketAccountManager:
         neg_risk: bool = False,
         market_version: int = 1,
         condition_id: Optional[str] = None,
+        min_price_override: Optional[float] = None,
         bal_before: Optional[float] = None,
     ) -> dict:
         if geoblocked:
@@ -2273,7 +2404,10 @@ class PolymarketAccountManager:
             raise RuntimeError("尚未完成钱包私钥与 CLOB V2 API 凭证派生")
 
         px = self._round_tick(price, tick_size)
-        sell_shares = round(max(0.01, shares), 2)
+        # v50 Fix: STRICT floor to 2 decimals so we NEVER try to sell 0.004 more shares than wallet owns!
+        sell_shares = math.floor(max(0.0, float(shares)) * 100.0) / 100.0
+        if sell_shares < 0.01:
+            raise RuntimeError(f"可卖持仓份额不足 ({float(shares):.4f} < 0.01)")
 
         async def _submit_sell():
             client = await self._ensure_sdk_client()
@@ -2288,7 +2422,10 @@ class PolymarketAccountManager:
                     post_only=True,
                 )
             else:
-                min_px = self._round_tick(max(0.01, px - 2.0 * max(0.01, tick_size)), tick_size)
+                if min_price_override is not None:
+                    min_px = self._round_tick(max(0.01, min(px, float(min_price_override))), tick_size)
+                else:
+                    min_px = self._round_tick(max(0.01, px - 2.0 * max(0.01, tick_size)), tick_size)
                 min_px_s = f"{min_px:.4f}".rstrip("0").rstrip(".")
                 resp = await self._call_sdk_market_order(
                     client,

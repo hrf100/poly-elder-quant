@@ -58,6 +58,7 @@ class FVDiscountLeaderStrategy:
     MAX_DYNAMIC_SLIP_C = 0.03     # Hard ceiling on dynamic slippage allowance (+3c)
 
     EXIT_MODES = ("TIME_TWAP_MOAT", "DYNAMIC_EV", "HOLD_EXPIRY")
+    SIZING_MODES = ("FIXED", "DYNAMIC_PCT")
 
     def __init__(self):
         self._streak_window_ts: int = 0
@@ -288,6 +289,35 @@ class FVDiscountLeaderStrategy:
             dyn_cap = max(round(ask, 2), min(dyn_cap, round(float(initial_max_cap), 2)))
         return True, "", round(ask, 4), dyn_cap
 
+    @staticmethod
+    def resolve_sizing_mode(risk_cfg: Optional[dict]) -> str:
+        cfg = risk_cfg or {}
+        sm = str(cfg.get("sizing_mode") or "FIXED").upper()
+        if sm in FVDiscountLeaderStrategy.SIZING_MODES:
+            return sm
+        return "FIXED"
+
+    @classmethod
+    def compute_target_unit(
+        cls,
+        risk_cfg: Optional[dict],
+        bankroll: Optional[float] = None,
+    ) -> float:
+        """
+        Compute target order stake in USDC:
+          - FIXED (default): `unit_size_usdc` (clamped >= HARD_LIMITS["min_unit_usdc"] = $1.05).
+          - DYNAMIC_PCT: `bankroll * (dynamic_pct / 100)`, clamped cleanly into [dynamic_min_usdc, dynamic_max_usdc].
+        """
+        cfg = risk_cfg or {}
+        min_hard = float(HARD_LIMITS["min_unit_usdc"])
+        if cls.resolve_sizing_mode(cfg) == "DYNAMIC_PCT" and bankroll is not None and float(bankroll) > 0:
+            pct = max(0.5, min(15.0, float(cfg.get("dynamic_pct", 3.0))))
+            floor_u = max(min_hard, float(cfg.get("dynamic_min_usdc", min_hard)))
+            ceil_u = max(floor_u, min(5000.0, float(cfg.get("dynamic_max_usdc", 50.0))))
+            raw = round(float(bankroll) * (pct / 100.0), 2)
+            return round(max(floor_u, min(ceil_u, raw)), 2)
+        return round(max(min_hard, min(5000.0, float(cfg.get("unit_size_usdc", 5.0)))), 2)
+
     @classmethod
     def calculate_fixed_stake(
         cls,
@@ -295,16 +325,20 @@ class FVDiscountLeaderStrategy:
         entry_price: float,
         taker_fee_rate: float = 0.05,
         spendable_cash_usdc: Optional[float] = None,
-        min_shares: float = 1.0,
+        min_shares: float = 0.0,
+        bankroll: Optional[float] = None,
+        is_taker: bool = True,
     ) -> float:
         """
-        Strict fixed-stake sizing (NO hidden 1.8x Kelly amplification!).
-        Caps cleanly to fee-adjusted available_cash; returns 0.0 if below Polymarket minimum.
+        v52 Unified Stake Calculator (FIXED or DYNAMIC_PCT, zero hidden Kelly amplification).
+        - Pure FAK Taker orders use Polymarket's $1.00 native floor (safe $1.05 min_unit_usdc), NOT 5-share Maker min.
+        - Maker orders (`is_taker=False`) still enforce `min_shares * entry_price`.
+        - Caps cleanly to fee-adjusted `spendable_cash_usdc`; returns 0.0 if unaffordable.
         """
         px = max(0.01, min(0.99, float(entry_price)))
-        min_share_notional = round(max(0.0, float(min_shares)) * px + 0.01, 2)
-        min_notional = max(HARD_LIMITS["min_unit_usdc"], min_share_notional)
-        target = max(min_notional, float(risk_cfg.get("unit_size_usdc", 5.0)))
+        min_share_notional = 0.0 if is_taker else round(max(0.0, float(min_shares)) * px + 0.01, 2)
+        min_notional = max(float(HARD_LIMITS["min_unit_usdc"]), min_share_notional)
+        target = max(min_notional, cls.compute_target_unit(risk_cfg, bankroll=bankroll))
 
         if spendable_cash_usdc is not None:
             avail = float(spendable_cash_usdc) - 0.02

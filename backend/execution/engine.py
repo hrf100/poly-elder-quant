@@ -126,6 +126,7 @@ class QuantTradingEngine:
             "min_rounds": int(auto_cfg.get("min_rounds", 16)),
             "next_auto_train_ts": self._last_auto_train_ts + int(auto_cfg.get("interval_hours", 12)) * 3600,
         }
+        self._early_live_events: dict[str, list[dict]] = {}
         self._tasks: list[asyncio.Task] = []
         self._stop = False
 
@@ -305,8 +306,14 @@ class QuantTradingEngine:
 
             matched_sh = float(ev.get("shares") or ev.get("size_matched") or 0.0)
             if matched_sh > 0.0:
-                exec_px = float(ev.get("fill_price") or ev.get("price") or ex_meta["trigger_px"])
-                is_maker = bool(ex_meta.get("is_maker", True))
+                is_sell_confirmed = (event_kind == "settlement_confirmed") or bool(ev.get("confirmed")) or (not ex_meta.get("confirming"))
+                if not is_sell_confirmed:
+                    # Wait for on-chain settlement confirmation before marking CLOSED!
+                    ex_meta["matched_shares"] = matched_sh
+                    ex_meta["matched_px"] = float(ev.get("fill_price") or ev.get("price") or ex_meta["trigger_px"])
+                    return
+                exec_px = float(ev.get("fill_price") or ev.get("price") or ex_meta.get("matched_px") or ex_meta["trigger_px"])
+                is_maker = bool(ex_meta.get("is_maker", False))
                 entry_fee = float(primary_ord.get("fee_usdc") or 0.0)
                 exit_fee = float(ev.get("fee_usdc") or 0.0)
                 if exit_fee <= 0.0 and not is_maker:
@@ -316,6 +323,7 @@ class QuantTradingEngine:
                 pnl = round(matched_sh * exec_px - closed_cost - entry_fee - exit_fee, 4)
 
                 upd = dict(primary_ord)
+                bal_after_sell = ev.get("bal_after_entry")
                 upd.update({
                     "status": "CLOSED",
                     "exit_price": round(exec_px, 4),
@@ -323,11 +331,12 @@ class QuantTradingEngine:
                     "fee_usdc": round(entry_fee + exit_fee, 4),
                     "pnl_usdc": pnl,
                     "settled_at": now,
+                    "bal_after_settle": round(float(bal_after_sell), 4) if bal_after_sell is not None else upd.get("bal_after_settle"),
                     "notes": (upd.get("notes") or "") + f" | 实盘确权{ex_meta['exit_reason']}@{exec_px:.2f} ({matched_sh:.2f}份, 净{pnl:+.2f})",
                 })
                 self.db.save_order(upd)
                 self._pending_live_exits.pop(oid, None)
-                self._set_decision(f"[实盘{ex_meta['exit_reason']}成交] @{exec_px:.2f} (净{pnl:+.2f})", sticky=True, now=now)
+                self._set_decision(f"[实盘{ex_meta['exit_reason']}确权] @{exec_px:.2f} (净{pnl:+.2f})", sticky=True, now=now)
                 try:
                     asyncio.get_running_loop().create_task(self._audit_live_settlement(int(upd["window_ts"]), [upd]))
                 except RuntimeError:
@@ -354,7 +363,14 @@ class QuantTradingEngine:
 
         # Case 2: LIVE entry or arb-lock BUY order
         ord_row = self.db.get_order(oid)
-        if not ord_row or ord_row.get("mode") != "LIVE":
+        if not ord_row:
+            # Buffer fast cross-thread SDK/WS events arriving milliseconds before replace_order_id() commits!
+            if len(self._early_live_events) > 32:
+                oldest_k = next(iter(self._early_live_events))
+                self._early_live_events.pop(oldest_k, None)
+            self._early_live_events.setdefault(oid, []).append(dict(ev))
+            return
+        if ord_row.get("mode") != "LIVE":
             return
         if ord_row.get("status") in ("SETTLED", "CLOSED"):
             return
@@ -393,7 +409,7 @@ class QuantTradingEngine:
             fill_px = float(ev.get("fill_price") or ev.get("price") or ord_row["limit_price"])
             real_cost = round(matched_sh * fill_px, 4)
             fee_usdc = float(ev.get("fee_usdc") or ord_row.get("fee_usdc") or 0.0)
-            if fee_usdc <= 0.0 and ord_row.get("arm_id") in ("TAKER_FAST", "ARB_LOCK_TAKER", "TWAP_SNIPER_TAKER"):
+            if fee_usdc <= 0.0 and ord_row.get("arm_id") in ("TAKER_FAST", "FV_LEADER_FAK", "ARB_LOCK_TAKER", "TWAP_SNIPER_TAKER"):
                 fee_usdc = round(matched_sh * self.current_taker_fee_rate * fill_px * (1.0 - fill_px), 4)
 
             is_chain_confirmed = (event_kind == "settlement_confirmed") or bool(ev.get("confirmed"))
@@ -448,7 +464,7 @@ class QuantTradingEngine:
                 asyncio.get_running_loop().create_task(self._send_webhook("实盘撤单失败告警", f"订单 {oid} ({upd['side']}@{upd['limit_price']}): {err_txt}"))
             except RuntimeError:
                 pass
-        elif event_kind in ("order_closed", "ttl_reconciled") and ord_row.get("status") == "PENDING":
+        elif event_kind in ("order_closed", "ttl_reconciled") and ord_row.get("status") in ("PENDING", "CONFIRMING", "SUBMITTING"):
             if ev.get("cancel_confirmed") is not True:
                 self.round_live_cancel_failed = True
                 self._set_decision(f"[实盘撤单待确认·锁定本场] {ord_row['side']}@{ord_row['limit_price']:.2f}", sticky=True, now=now)
@@ -467,6 +483,7 @@ class QuantTradingEngine:
                 "notes": (upd.get("notes") or "") + f" | 实盘确认撤单({ev.get('exchange_status') or 'TTL'})",
             })
             self.db.save_order(upd)
+            self.account._local_reserved_usdc = 0.0
             if upd.get("arm_id") not in ARB_ARM_IDS:
                 self.last_cancel_ts = now
                 self.last_cancel_side = str(upd.get("side") or "")
@@ -532,7 +549,49 @@ class QuantTradingEngine:
                 st = str(o.get("status") or "")
                 oid = str(o.get("order_id") or "")
                 if st in ("PENDING", "CONFIRMING", "SUBMITTING") and oid and oid not in seen_ids:
-                    if st == "SUBMITTING" and (now_ts - float(o.get("created_at") or now_ts)) < 15.0:
+                    age_o = now_ts - float(o.get("created_at") or now_ts)
+                    if st == "SUBMITTING" and age_o < 15.0:
+                        continue
+                    if oid.startswith("sub_"):
+                        # Network-timeout placeholder without exchange order_id: resolve via exchange positions/cash!
+                        if age_o >= 15.0:
+                            pf_sub = await self.account.refresh_balances_and_portfolio(force=True, cache_key=str(self.current_condition_id or ""))
+                            tid_sub = self.current_up_token if o["side"] == "UP" else self.current_down_token
+                            ex_sh_sub = sum(
+                                float(p.get("current_size") or p.get("size") or 0.0)
+                                for p in (pf_sub.get("open_positions") or [])
+                                if str(p.get("asset_id") or "") == str(tid_sub or "")
+                            )
+                            avail_sub = float(pf_sub.get("available_cash") or 0.0)
+                            upd_sub = dict(o)
+                            if ex_sh_sub >= 0.5:
+                                upd_sub.update({
+                                    "status": "FILLED",
+                                    "fill_price": float(o.get("limit_price") or 0.5),
+                                    "shares": round(ex_sh_sub, 4),
+                                    "size_usdc": round(ex_sh_sub * float(o.get("limit_price") or 0.5), 4),
+                                    "filled_at": now_ts,
+                                    "bal_after_entry": round(avail_sub, 4),
+                                    "recon_status": "WARN",
+                                    "recon_note": f"超时发单在交易所查到真实持仓({ex_sh_sub:.2f}份)，已自动认领",
+                                    "notes": (o.get("notes") or "") + f" | 超时对账认领真实持仓({ex_sh_sub:.2f}份)",
+                                })
+                                self.db.save_order(upd_sub)
+                            elif pf_sub.get("cash_verified") and len(pf_sub.get("open_orders") or []) == 0:
+                                bal_b_s = o.get("bal_before")
+                                if bal_b_s is None or abs(avail_sub - float(bal_b_s)) <= 0.25:
+                                    upd_sub.update({
+                                        "status": "FAILED",
+                                        "shares": 0.0,
+                                        "settled_at": now_ts,
+                                        "bal_after_settle": round(avail_sub, 4),
+                                        "recon_status": "OK",
+                                        "recon_diff": round(avail_sub - float(bal_b_s), 4) if bal_b_s is not None else 0.0,
+                                        "recon_note": f"发单超时且交易所无挂单/0持仓/未扣款(${avail_sub:.2f})，已安全释放",
+                                        "notes": (o.get("notes") or "") + " | 超时对账确认未成交，释放槽位",
+                                    })
+                                    self.db.save_order(upd_sub)
+                                    self.account._local_reserved_usdc = 0.0
                         continue
                     seen_ids.add(oid)
                     pending_list.append({
@@ -594,10 +653,12 @@ class QuantTradingEngine:
                             upd["recon_note"] = f"交易所持仓核验通过({ex_sh:.2f}份) | 实扣${act_sp:.2f}/理论${exp_sp:.2f}"
                             self.db.save_order(upd)
                     else:
-                        # Exchange reports 0 shares for a local FILLED order > 15s old!
+                        # Exchange list_positions() reports 0 shares for a local FILLED order > 15s old:
+                        # v50 Guard: MUST double-check via get_order() + list_account_trades() before ever rolling back!
                         bal_b = upd.get("bal_before")
                         no_spend = (bal_b is not None and abs(avail_now - float(bal_b)) <= 0.25)
-                        if no_spend and not upd.get("exit_price"):
+                        ver = await self.account.verify_order_actually_unfilled(str(upd["order_id"]), condition_id=self.current_condition_id)
+                        if ver.get("confirmed_unfilled") and no_spend and not upd.get("exit_price"):
                             upd["status"] = "FAILED"
                             upd["shares"] = 0.0
                             upd["pnl_usdc"] = 0.0
@@ -606,13 +667,18 @@ class QuantTradingEngine:
                             upd["bal_after_settle"] = round(avail_now, 4)
                             upd["recon_status"] = "MISMATCH"
                             upd["recon_diff"] = round(avail_now - float(bal_b), 4)
-                            upd["recon_note"] = f"核验异常: 交易所0持仓且余额未扣(${float(bal_b):.2f}→${avail_now:.2f})，已自动撤销假持仓"
-                            upd["notes"] = (upd.get("notes") or "") + " | 交易所0持仓且余额未扣，自动修正为FAILED"
+                            upd["recon_note"] = f"核验确认为假持仓({ver.get('exchange_status')}·0成·未扣款)，已自动修正为FAILED"
+                            upd["notes"] = (upd.get("notes") or "") + f" | 订单核验{ver.get('exchange_status')}/0成，自动修正为FAILED"
                             self.db.save_order(upd)
-                            self._set_decision(f"[实盘核验修正] {upd['side']} 交易所0持仓且余额未扣，已清除假持仓", sticky=True, now=now_ts)
+                            self._set_decision(f"[实盘核验修正] {upd['side']} 订单确认为未成交，已清除假持仓", sticky=True, now=now_ts)
+                        elif ver.get("size_matched", 0.0) > 0.0:
+                            if upd.get("recon_status") not in ("OK", "WARN"):
+                                upd["recon_status"] = "WARN"
+                                upd["recon_note"] = f"订单已成({ver['size_matched']:.2f}份)但持仓接口暂返0份(可能链上同步延迟或外部已平)"
+                                self.db.save_order(upd)
                         elif upd.get("recon_status") != "MISMATCH":
                             upd["recon_status"] = "MISMATCH"
-                            upd["recon_note"] = f"警告: 本地显示持仓但交易所当前0份(请检查是否外部平仓或链上延迟)"
+                            upd["recon_note"] = "警告: 交易所持仓暂返0份且未确认撤单(请检查官网持仓)"
                             self.db.save_order(upd)
         return res
 
@@ -631,9 +697,10 @@ class QuantTradingEngine:
         active_spent = sum(
             float(o.get("size_usdc") or 0.0)
             for o in orders
-            if o.get("status") in ("PENDING", "FILLED", "CLOSED", "SETTLED")
+            if o.get("status") in ("SUBMITTING", "CONFIRMING", "PENDING", "FILLED", "CLOSED", "SETTLED")
         )
-        unit = max(HARD_LIMITS["min_unit_usdc"], float(risk_cfg.get("unit_size_usdc", 10.0)))
+        live_eq = float(self.account.cached_portfolio.get("total_equity") or self.account.get_available_cash() or 0.0)
+        unit = self.fv_strategy.compute_target_unit(risk_cfg, bankroll=live_eq if live_eq > 0 else None)
         round_budget_cap = round(unit * (2.2 if is_arb else 1.85), 2)
         if active_spent + float(size_usdc) > round_budget_cap + 0.25:
             return False, f"触及单场资金硬上限 (${active_spent:.2f}+${size_usdc:.2f} > ${round_budget_cap:.2f})", {}
@@ -642,6 +709,8 @@ class QuantTradingEngine:
             self.current_condition_id,
             [t for t in (self.current_up_token, self.current_down_token) if t],
         )
+        if not exp.get("checked", False):
+            return False, f"交易所敞口核验失败({exp.get('error') or 'SDK查询超时'})，安全熔断拦截发单", exp
         if exp.get("open_orders_count", 0) > 0:
             return False, f"交易所本场已有 {exp['open_orders_count']} 笔活跃挂单，硬熔断拦截", exp
         if not is_arb and exp.get("position_shares", 0.0) >= 0.5:
@@ -1509,15 +1578,28 @@ class QuantTradingEngine:
             shares = float(primary_ord.get("shares") or 0.0)
             if token_id and shares > 0:
                 exp = await self.account.check_round_exchange_exposure(self.current_condition_id, [token_id])
+                if not exp.get("checked", False):
+                    self._set_decision(f"[实盘平仓等待] 敞口核验超时({exp.get('error') or '重试'})", sticky=False, now=now)
+                    return False
                 if exp.get("open_orders_count", 0) > 0:
                     return True
                 ex_sh = float((exp.get("position_shares_by_token") or {}).get(str(token_id), 0.0))
                 if ex_sh > 0.01:
                     shares = min(shares, ex_sh)
-                ok_bk, bk_msg, _ = await self.clob.verify_fresh_book_rest(side, trigger_px, is_buy=False, is_taker=(not is_maker))
+
+                is_fv_ord = (str(primary_ord.get("entry_strategy") or "") == "fv_discount_leader" or str(primary_ord.get("arm_id") or "") == "FV_LEADER_FAK")
+                min_sell_px = max(0.70 if is_fv_ord else 0.01, round(trigger_px - 0.02, 2))
+                rest_sell_check_px = min_sell_px if (not is_maker) else trigger_px
+                ok_bk, bk_msg, fresh_sell_bk = await self.clob.verify_fresh_book_rest(
+                    side, rest_sell_check_px, is_buy=False, is_taker=(not is_maker)
+                )
                 if not ok_bk:
                     self._set_decision(f"[实盘平仓等待] {bk_msg}", sticky=False, now=now)
                     return False
+                if fresh_sell_bk and float(fresh_sell_bk.get("best_bid") or 0.0) >= min_sell_px and (not is_maker):
+                    trigger_px = float(fresh_sell_bk["best_bid"])
+
+                bal_before_sell = self.account.get_available_cash()
                 self.last_exit_attempt_ts = now
                 try:
                     res = await self.account.place_live_sell_order(
@@ -1528,42 +1610,67 @@ class QuantTradingEngine:
                         neg_risk=self.current_neg_risk,
                         market_version=self.current_market_version,
                         condition_id=self.current_condition_id,
+                        min_price_override=min_sell_px if (not is_maker) else None,
+                        bal_before=bal_before_sell,
                     )
                     sell_oid = str(res.get("order_id") or "")
                     matched_sh = float(res.get("matched_shares") or 0.0)
-                    if matched_sh > 0.0:
+                    is_delayed_sell = bool(res.get("is_delayed", False))
+
+                    if (matched_sh > 0.0 or is_delayed_sell) and sell_oid:
+                        # v50 Fix: Register sell_oid in confirming state until Polygon on-chain settlement verifies!
+                        # Prevents fake CLOSED if the SELL transaction reverts on-chain.
                         exec_px = float(res.get("exec_price") or trigger_px)
-                        entry_fee = float(primary_ord.get("fee_usdc") or 0.0)
-                        exit_fee = (matched_sh * self.current_taker_fee_rate * exec_px * (1.0 - exec_px)) if (not is_maker) else 0.0
-                        pnl = round(matched_sh * exec_px - float(primary_ord["size_usdc"]) - entry_fee - exit_fee, 4)
-                        ord_upd = dict(primary_ord)
-                        ord_upd.update({
-                            "status": "CLOSED",
-                            "exit_price": round(exec_px, 4),
+                        self._pending_live_exits[sell_oid] = {
+                            "primary_order_id": primary_ord["order_id"],
                             "exit_reason": exit_sig["exit_reason"],
-                            "fee_usdc": round(entry_fee + exit_fee, 4),
-                            "pnl_usdc": pnl,
-                            "settled_at": now,
-                            "notes": (ord_upd.get("notes") or "") + f" | 实盘{exit_sig['exit_reason']}@{exec_px:.2f} (净{pnl:+.2f})",
-                        })
-                        self.db.save_order(ord_upd)
-                        self._set_decision(f"[实盘{exit_sig['exit_reason']}成交] @{exec_px:.2f} (净{pnl:+.2f})", sticky=True, now=now)
-                        asyncio.create_task(self._audit_live_settlement(int(ord_upd["window_ts"]), [ord_upd]))
-                    elif sell_oid and not is_maker:
+                            "trigger_px": exec_px,
+                            "matched_shares": matched_sh,
+                            "matched_px": exec_px,
+                            "is_maker": bool(is_maker),
+                            "confirming": True,
+                            "created_at": now,
+                        }
+                        self._set_decision(
+                            f"[实盘{exit_sig['exit_reason']}确权中] @{exec_px:.2f} ({matched_sh or shares:.2f}份)",
+                            sticky=True, now=now,
+                        )
+                        # Replay any early cross-thread settlement event for sell_oid
+                        for early_ev in self._early_live_events.pop(sell_oid, []):
+                            self._on_live_order_update(early_ev)
+                    elif sell_oid and is_maker:
+                        # v50 Fix: ONLY resting Maker SELL orders enter pending open-order tracking!
                         self._pending_live_exits[sell_oid] = {
                             "primary_order_id": primary_ord["order_id"],
                             "exit_reason": exit_sig["exit_reason"],
                             "trigger_px": trigger_px,
                             "is_maker": True,
+                            "confirming": False,
                             "created_at": now,
                         }
                         self._set_decision(f"[实盘{exit_sig['exit_reason']}挂卖中] @{trigger_px:.2f} ({shares:.2f}份)", sticky=True, now=now)
                     else:
-                        self._set_decision(f"[实盘{exit_sig['exit_reason']}未成] FAK无对手盘，继续监控", sticky=False, now=now)
+                        # Unfilled FAK SELL (0 matched, not delayed) -> NEVER locks `_pending_live_exits`!
+                        self._set_decision(f"[实盘{exit_sig['exit_reason']}未成] 保护价≥{min_sell_px:.2f}无买盘，继续监控", sticky=False, now=now)
                     return True
                 except Exception as e:
-                    self._set_decision(f"[实盘平仓失败] {str(e)[:55]}", sticky=False, now=now)
-                    await self._send_webhook("实盘平仓失败", str(e))
+                    full_err = str(e)
+                    err_low = full_err.lower()
+                    is_fak_no_match = (
+                        "no orders found to match" in err_low
+                        or "no match" in err_low
+                        or ("fak" in err_low and "killed" in err_low)
+                    )
+                    if is_fak_no_match:
+                        # Normal FAK SELL unfilled within price floor -> retry after 5s instead of 15s, no error webhook
+                        self.last_exit_attempt_ts = now - 10.0
+                        self._set_decision(
+                            f"[实盘{exit_sig['exit_reason']}未成] 保护价≥{min_sell_px:.2f}无买盘，继续监控",
+                            sticky=False, now=now,
+                        )
+                    else:
+                        self._set_decision(f"[实盘平仓失败] {full_err[:55]}", sticky=False, now=now)
+                        await self._send_webhook("实盘平仓失败", full_err)
         return False
 
     async def _submit_entry_order(
@@ -1641,15 +1748,19 @@ class QuantTradingEngine:
                 return
             if fresh_bk and float(fresh_bk.get("best_bid") or 0) > 0 and float(fresh_bk.get("best_ask") or 0) > 0:
                 if entry_strategy == "fv_discount_leader":
-                    _, _, z_c = self.fv_strategy.compute_fair_probs(snap, elapsed_sec)
+                    latest_snap = self.features.latest_snapshot or snap
+                    el_live = max(0, min(300, int(time.time() - self.current_window_ts))) if self.current_window_ts else elapsed_sec
+                    p_up_live, p_dn_live, z_c = self.fv_strategy.compute_fair_probs(latest_snap, el_live)
+                    fresh_prob = p_up_live if sig == "UP" else p_dn_live
                     sz_c = z_c if sig == "UP" else -z_c
                     ok_fv, fv_msg, fv_ask, fv_cap = self.fv_strategy.revalidate_on_fresh_book(
-                        sig, model_prob, sz_c, fresh_bk, self.current_taker_fee_rate,
+                        sig, fresh_prob, sz_c, fresh_bk, self.current_taker_fee_rate,
                         initial_max_cap=max_price_override,
                     )
                     if not ok_fv:
                         self._record_block(f"实盘FV复核拦截: {fv_msg}", "盘口复核", now=now)
                         return
+                    model_prob = fresh_prob
                     px_tick = self.clob.round_to_tick(fv_ask, side=sig, mode="nearest")
                     max_price_override = fv_cap
                     book = fresh_bk
@@ -1664,7 +1775,7 @@ class QuantTradingEngine:
 
             # Final fee-aware available_cash verification right before firing real money order
             avail_now = self.account.get_available_cash()
-            min_req_notional = max(HARD_LIMITS["min_unit_usdc"], round(float(self.current_min_size or 5.0) * px_tick + 0.01, 2))
+            min_req_notional = float(HARD_LIMITS["min_unit_usdc"]) if is_tk else max(float(HARD_LIMITS["min_unit_usdc"]), round(float(self.current_min_size or 5.0) * px_tick + 0.01, 2))
             max_aff = self.learner.max_affordable_notional(avail_now, px_tick, is_tk, self.current_taker_fee_rate)
             if max_aff < min_req_notional:
                 min_cash_need = self.learner.required_buy_cash(min_req_notional, px_tick, is_tk, self.current_taker_fee_rate)
@@ -1766,7 +1877,13 @@ class QuantTradingEngine:
                     "recon_note": f"FAK未成无扣款(余额${bal_before_snap:.2f})" if init_status == "CANCELLED" else f"等待链上确权 (前${bal_before_snap:.2f})",
                     "notes": f"实盘V2[{extra_note}] {res.get('exchange_status')}({res.get('raw_summary') or ''}) 离场:{exit_arm} | 盘口 {book['best_bid']:.2f}/{book['best_ask']:.2f}",
                 })
+                real_oid = final_order["order_id"]
                 self.db.replace_order_id(tmp_oid, final_order)
+
+                # Replay any cross-thread UserWS / settlement events that arrived before DB swap committed
+                if real_oid and real_oid in self._early_live_events:
+                    for early_ev in self._early_live_events.pop(real_oid, []):
+                        self._on_live_order_update(early_ev)
 
                 if init_status == "CANCELLED":
                     self.last_cancel_ts = now
@@ -1778,20 +1895,69 @@ class QuantTradingEngine:
                     st_txt = "链上确权中" if init_status == "CONFIRMING" else "挂单中"
                     self._set_decision(f"[实盘·{st_txt}] {sig} @{m_px if filled_now else px_tick:.2f} (${real_cost:.2f})", sticky=True, now=now)
             except Exception as e:
-                err_s = str(e)[:90]
-                rej = dict(placeholder)
-                rej.update({
-                    "status": "REJECTED",
-                    "settled_at": now,
-                    "bal_after_settle": bal_before_snap,
-                    "recon_status": "OK",
-                    "recon_diff": 0.0,
-                    "recon_note": f"拒单/异常未扣款(余额${bal_before_snap:.2f}): {err_s[:45]}",
-                    "notes": f"实盘下单失败: {err_s}",
-                })
-                self.db.save_order(rej)
-                self._set_decision(f"[实盘失败] {err_s[:60]}", sticky=False, now=now)
-                await self._send_webhook("实盘下单失败", err_s)
+                full_err = str(e)
+                err_s = full_err[:120]
+                err_low = full_err.lower()
+                is_fak_no_match = (
+                    "no orders found to match" in err_low
+                    or "no match" in err_low
+                    or ("fak" in err_low and "killed" in err_low)
+                )
+                is_ambiguous_net = (not is_fak_no_match) and (
+                    isinstance(e, (asyncio.TimeoutError, TimeoutError, ConnectionError, OSError))
+                    or any(k in err_low for k in ("timeout", "timed out", "connection", "reset by peer", "eof", "502", "503", "504"))
+                )
+                is_definite_reject = (not is_fak_no_match) and (not is_ambiguous_net) and (
+                    any(k in full_err for k in ("CLOB V2 拒单", "地区限制", "只读观察钱包", "尚未完成钱包私钥", "下单份额", "余额不足", "FAK 吃单金额", "Maker 挂单份额", "异常响应(无 order_id)", "400", "403", "422"))
+                    or any(k in err_low for k in ("not enough balance", "allowance", "invalid amount", "min size", "lower than the minimum", "tick size", "post-only", "post only"))
+                )
+
+                if is_fak_no_match:
+                    # v53: Polymarket normal FAK unfilled within price ceiling -> CANCELLED immediately (resume in 3s!)
+                    cxl = dict(placeholder)
+                    cxl.update({
+                        "status": "CANCELLED",
+                        "settled_at": now,
+                        "bal_after_settle": bal_before_snap,
+                        "recon_status": "OK",
+                        "recon_diff": 0.0,
+                        "recon_note": f"FAK保护价内无对手盘，未扣款(余额${bal_before_snap:.2f})",
+                        "notes": f"实盘FAK未成(保护价内无对手盘): {err_s}",
+                    })
+                    self.db.save_order(cxl)
+                    self.last_cancel_ts = now
+                    self.last_cancel_side = sig
+                    self._set_decision(f"[实盘FAK未成] {sig}@{px_tick:.2f} 保护价内无对手盘，继续寻机", sticky=False, now=now)
+                elif is_definite_reject:
+                    rej = dict(placeholder)
+                    rej.update({
+                        "status": "REJECTED",
+                        "settled_at": now,
+                        "bal_after_settle": bal_before_snap,
+                        "recon_status": "OK",
+                        "recon_diff": 0.0,
+                        "recon_note": f"交易所明确拒单未扣款(余额${bal_before_snap:.2f}): {err_s[:45]}",
+                        "notes": f"实盘明确拒单: {err_s}",
+                    })
+                    self.db.save_order(rej)
+                    self.last_cancel_ts = now
+                    self._set_decision(f"[实盘拒单] {err_s[:60]}", sticky=False, now=now)
+                    await self._send_webhook("实盘下单拒单", err_s)
+                else:
+                    # v50 CRITICAL: Ambiguous/timeout error -> KEEP SLOT LOCKED in CONFIRMING! NEVER duplicate order!
+                    self.account.reserve_local_cash(req_entry_cash)
+                    self.last_signal_ts = now
+                    uncertain = dict(placeholder)
+                    uncertain.update({
+                        "status": "CONFIRMING",
+                        "recon_status": "PENDING",
+                        "recon_note": f"发单超时/网络异常，锁定本场等待交易所对账({err_s[:40]})",
+                        "notes": f"实盘提交超时待核: {err_s}",
+                    })
+                    self.db.save_order(uncertain)
+                    self._set_decision(f"[实盘超时·锁定本场待对账] {err_s[:50]}", sticky=True, now=now)
+                    asyncio.create_task(self.reconcile_live_orders())
+                    await self._send_webhook("实盘发单超时·已锁定本场", err_s)
 
     async def _evaluate_fv_discount_leader(
         self, now, elapsed_sec, snap, model_up_p, model_dn_p, up_book, dn_book, up_edge, dn_edge, risk_cfg
@@ -1918,16 +2084,21 @@ class QuantTradingEngine:
                 self._record_block(f"实盘余额核验失败，暂缓开单({ci.get('error') or '请刷新资产'})", "余额核验", now=now)
                 return
             spendable = float(ci["available_cash"])
+            bankroll = max(float(ci["total_equity"]), spendable)
+        else:
+            bankroll = self.paper.get_balance()
 
         size_usdc = self.fv_strategy.calculate_fixed_stake(
             risk_cfg,
             limit_px,
             taker_fee_rate=self.current_taker_fee_rate,
             spendable_cash_usdc=spendable,
-            min_shares=self.current_min_size if effective_mode == "LIVE" else 1.0,
+            min_shares=0.0,
+            bankroll=bankroll,
+            is_taker=True,
         )
         if size_usdc <= 0:
-            min_n = max(HARD_LIMITS["min_unit_usdc"], round(float(self.current_min_size or 5.0) * limit_px + 0.01, 2))
+            min_n = float(HARD_LIMITS["min_unit_usdc"])
             need_c = self.learner.required_buy_cash(min_n, limit_px, True, self.current_taker_fee_rate)
             self._record_block(f"实盘可用 pUSD 不足 (可用${spendable or 0.0:.2f} < 最低需${need_c:.2f}含费)", "余额不足", now=now)
             return
@@ -2118,7 +2289,7 @@ class QuantTradingEngine:
                             is_twap_sniper=True,
                             taker_fee_rate_override=self.current_taker_fee_rate,
                             spendable_cash_usdc=spendable_s,
-                            min_shares=self.current_min_size if s_mode == "LIVE" else 1.0,
+                            min_shares=(0.0 if s_is_tk else self.current_min_size) if s_mode == "LIVE" else 1.0,
                         )
                         if size_usdc > 0:
                             self.latest_pricing["signal"] = s_side
@@ -2185,7 +2356,7 @@ class QuantTradingEngine:
                 return
             spendable_std = float(ci["available_cash"])
             bankroll = max(float(ci["total_equity"]), spendable_std)
-            min_notional_live = max(HARD_LIMITS["min_unit_usdc"], round(float(self.current_min_size or 5.0) * limit_px + 0.01, 2))
+            min_notional_live = float(HARD_LIMITS["min_unit_usdc"]) if is_tk_std else max(float(HARD_LIMITS["min_unit_usdc"]), round(float(self.current_min_size or 5.0) * limit_px + 0.01, 2))
             min_cash_live = self.learner.required_buy_cash(min_notional_live, limit_px, is_tk_std, self.current_taker_fee_rate)
             if spendable_std < min_cash_live:
                 lock_hint = f"，挂单锁定${ci['locked']:.2f}" if ci["locked"] > 0 else ""
@@ -2205,7 +2376,7 @@ class QuantTradingEngine:
             remaining_sec=rem_sec, iv_state=str(snap.get("iv_state", "FAIR")), is_buying_itm=is_buying_itm,
             taker_fee_rate_override=self.current_taker_fee_rate,
             spendable_cash_usdc=spendable_std,
-            min_shares=self.current_min_size if target_mode == "LIVE" else 1.0,
+            min_shares=(0.0 if is_tk_std else self.current_min_size) if target_mode == "LIVE" else 1.0,
         )
 
         if size_usdc <= 0:

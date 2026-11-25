@@ -13,7 +13,7 @@ from backend.config import HARD_LIMITS, MODELS_DIR
 from backend.strategy.offline_trainer import load_model_artifact
 
 STRATEGY_SCHEMA = "poly-elder-quant-strategy/v1"
-APP_VERSION = "v49"
+APP_VERSION = "v53"
 MAX_ARTIFACT_BYTES = 10 * 1024 * 1024  # 10 MB hard cap
 BACKUP_KV_KEY = "strategy_pre_import_backup"
 
@@ -115,9 +115,16 @@ def export_strategy_bundle(engine, include_model: bool = True, name: str = "") -
         },
         "self_learning_state": online_state,
         "risk_config": {
-            "unit_size_usdc": float(risk_cfg.get("unit_size_usdc", 10.0)),
-            "max_daily_loss_usdc": float(risk_cfg.get("max_daily_loss_usdc", 100.0)),
-            "consecutive_loss_limit": int(risk_cfg.get("consecutive_loss_limit", 3)),
+            "unit_size_usdc": float(risk_cfg.get("unit_size_usdc", 5.0)),
+            "max_daily_loss_usdc": float(risk_cfg.get("max_daily_loss_usdc", 50.0)),
+            "consecutive_loss_limit": int(risk_cfg.get("consecutive_loss_limit", 4)),
+            "strategy_engine": str(risk_cfg.get("strategy_engine") or "FV_DISCOUNT_LEADER"),
+            "fv_exit_mode": str(risk_cfg.get("fv_exit_mode") or "TIME_TWAP_MOAT"),
+            "fv_strict_5s_confirm": bool(risk_cfg.get("fv_strict_5s_confirm", False)),
+            "sizing_mode": str(risk_cfg.get("sizing_mode") or "FIXED"),
+            "dynamic_pct": float(risk_cfg.get("dynamic_pct", 3.0)),
+            "dynamic_min_usdc": float(risk_cfg.get("dynamic_min_usdc", HARD_LIMITS["min_unit_usdc"])),
+            "dynamic_max_usdc": float(risk_cfg.get("dynamic_max_usdc", 50.0)),
         },
         "auto_train_config": {
             "enabled": bool(auto_train_cfg.get("enabled", True)),
@@ -293,10 +300,28 @@ def import_strategy_bundle(
     # 2. Risk baseline config (clamped safely)
     if apply_risk_config and isinstance(norm.get("risk_config"), dict):
         rc = norm["risk_config"]
+        min_u = float(HARD_LIMITS["min_unit_usdc"])
+        sm = str(rc.get("sizing_mode") or "FIXED").upper()
+        if sm not in ("FIXED", "DYNAMIC_PCT"):
+            sm = "FIXED"
+        em = str(rc.get("fv_exit_mode") or "TIME_TWAP_MOAT").upper()
+        if em not in ("TIME_TWAP_MOAT", "DYNAMIC_EV", "HOLD_EXPIRY"):
+            em = "TIME_TWAP_MOAT"
+        d_min = round(max(min_u, min(1000.0, float(rc.get("dynamic_min_usdc", min_u)))), 2)
+        d_max = round(max(d_min, min(5000.0, float(rc.get("dynamic_max_usdc", 50.0)))), 2)
         sanitized_rc = {
-            "unit_size_usdc": round(max(HARD_LIMITS["min_unit_usdc"], min(5000.0, float(rc.get("unit_size_usdc", 10.0)))), 2),
-            "max_daily_loss_usdc": round(max(10.0, min(100000.0, float(rc.get("max_daily_loss_usdc", 100.0)))), 2),
-            "consecutive_loss_limit": max(1, min(20, int(rc.get("consecutive_loss_limit", 3)))),
+            "unit_size_usdc": round(max(min_u, min(5000.0, float(rc.get("unit_size_usdc", 5.0)))), 2),
+            "max_daily_loss_usdc": round(max(3.0, min(100000.0, float(rc.get("max_daily_loss_usdc", 50.0)))), 2),
+            "consecutive_loss_limit": max(2, min(20, int(rc.get("consecutive_loss_limit", 4)))),
+            "live_taker_only": bool(rc.get("live_taker_only", True)),
+            "live_enable_arb_lock": bool(rc.get("live_enable_arb_lock", False)),
+            "strategy_engine": str(rc.get("strategy_engine") or "FV_DISCOUNT_LEADER"),
+            "fv_exit_mode": em,
+            "fv_strict_5s_confirm": bool(rc.get("fv_strict_5s_confirm", False)),
+            "sizing_mode": sm,
+            "dynamic_pct": round(max(0.5, min(15.0, float(rc.get("dynamic_pct", 3.0)))), 2),
+            "dynamic_min_usdc": d_min,
+            "dynamic_max_usdc": d_max,
         }
         engine.db.set_json("risk_config", sanitized_rc)
         applied.append("风控底线")
